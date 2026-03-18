@@ -1,0 +1,62 @@
+# REFINET Cloud — Python Dependencies
+# All open-source. Zero paid services.
+
+# Web framework
+fastapi==0.115.*
+uvicorn[standard]==0.32.*
+pydantic==2.10.*
+pydantic-settings==2.7.*
+
+# Database
+sqlalchemy==2.0.*
+
+# Auth: Password
+argon2-cffi==23.*
+passlib[argon2]==1.7.*
+
+# Auth: TOTP
+pyotp==2.9.*
+qrcode[pil]==8.*
+
+# Auth: JWT
+PyJWT==2.10.*
+
+# Auth: SIWE / Ethereum
+web3==7.*
+eth-account==0.13.*
+
+# Encryption
+cryptography==44.*
+
+# Validation
+email-validator==2.*
+
+# SMTP bridge
+aiosmtpd==1.*
+
+# HTTP client (for BitNet sidecar + webhooks)
+httpx==0.28.*
+
+# Rate limiting
+slowapi==0.1.*
+
+# Middleware
+python-multipart==0.0.*
+
+# CLI
+python-dotenv==1.0.*
+
+# Semantic embeddings (RAG)
+sentence-transformers>=2.7
+
+# Schema migrations
+alembic>=1.13              # Database migration tool (MIT license)
+
+# Document parsing (sovereign — zero API calls)
+PyMuPDF>=1.24              # PDF text extraction (MIT license)
+python-docx>=1.1           # DOCX text extraction (MIT license)
+openpyxl>=3.1              # XLSX text extraction (MIT license)
+
+# Testing
+pytest==8.*
+pytest-asyncio==0.24.*

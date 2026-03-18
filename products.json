@@ -1,0 +1,22 @@
+{
+  "products": [
+    {
+      "name": "pillars",
+      "subdomain": "infrastructure.refinet.io",
+      "repo": "",
+      "branch": "main",
+      "build_cmd": "npm run build",
+      "out_dir": "out",
+      "description": "REFINET Pillars — Gopher servers with REFINET infrastructure"
+    },
+    {
+      "name": "browser",
+      "subdomain": "browser.refinet.io",
+      "repo": "",
+      "branch": "main",
+      "build_cmd": "npm run build",
+      "out_dir": "out",
+      "description": "REFINET Browser — Sovereign internet access via REFINET Pillars"
+    }
+  ]
+}

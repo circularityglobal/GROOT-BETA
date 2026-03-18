@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>REFINET Browser — Sovereign Internet Access</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #050505;
+            color: #F5F5F5;
+            font-family: 'Inter', system-ui, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .container { text-align: center; position: relative; z-index: 10; max-width: 600px; padding: 2rem; }
+        .tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: #00FF41;
+            background: rgba(0,255,65,0.06);
+            border: 1px solid rgba(0,255,65,0.15);
+            padding: 6px 14px;
+            border-radius: 999px;
+            margin-bottom: 2rem;
+        }
+        .tag .dot { width: 6px; height: 6px; border-radius: 50%; background: #00FF41; animation: pulse 2s infinite; }
+        h1 {
+            font-size: clamp(2rem, 5vw, 3.5rem);
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            line-height: 1.1;
+            margin-bottom: 1rem;
+        }
+        h1 span { color: #00FF41; }
+        .desc {
+            font-size: 1rem;
+            color: #A3A3A3;
+            line-height: 1.6;
+            margin-bottom: 2rem;
+        }
+        .prompt {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            color: #6B6B6B;
+            margin-bottom: 2rem;
+        }
+        .prompt .cursor { color: #00FF41; animation: blink 1s infinite; }
+        .back {
+            display: inline-block;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            color: #00FF41;
+            text-decoration: none;
+            border: 1px solid rgba(0,255,65,0.3);
+            padding: 10px 24px;
+            border-radius: 10px;
+            transition: all 0.2s;
+        }
+        .back:hover { background: rgba(0,255,65,0.1); border-color: #00FF41; }
+        .grid {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            opacity: 0.15;
+            background-image: radial-gradient(circle, #1C1C1C 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+        @keyframes blink { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
+    </style>
+</head>
+<body>
+    <div class="grid"></div>
+    <div class="container">
+        <div class="tag"><span class="dot"></span> browser.refinet.io</div>
+        <h1>REFINET <span>Browser</span></h1>
+        <p class="desc">
+            A fully sovereign browser powered by REFINET Pillars.
+            Encrypted transit, decentralized DNS, wallet-based identity,
+            and direct connection to GROOT intelligence.
+        </p>
+        <p class="prompt">&gt; refinet://sovereign.net<span class="cursor">_</span></p>
+        <a href="https://app.refinet.io" class="back">&gt; app.refinet.io</a>
+    </div>
+</body>
+</html>

@@ -1,0 +1,53 @@
+# Environment
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+/data/
+
+# BitNet (downloaded models + local build artifacts)
+bitnet/models/
+bitnet/local/
+bitnet/bin/
+
+# Node / Frontend
+node_modules/
+.next/
+out/
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Certs (managed by certbot)
+certs/
+
+# Secrets
+*.pem
+*.key

@@ -1,0 +1,250 @@
+"""
+REFINET Cloud — Main Application
+FastAPI app factory with router registration, middleware, and database init.
+Multi-protocol MCP gateway: REST, GraphQL, gRPC, SOAP, WebSocket, Webhooks.
+"""
+
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+from api.database import init_databases
+from api.middleware.rate_limit import limiter
+from api.middleware.request_size import RequestSizeMiddleware
+from api.middleware.cors import add_cors
+from api.middleware.logging import LoggingMiddleware
+
+# Import all models to register with SQLAlchemy metadata
+import api.models  # noqa: F401
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+
+_grpc_task = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup: create tables, start gRPC, register event bus. Shutdown: cleanup."""
+    global _grpc_task
+
+    init_databases()
+    logging.getLogger("refinet").info("Databases initialized")
+
+    # Seed platform config defaults (only inserts if key doesn't exist)
+    try:
+        from api.database import get_internal_session
+        from api.services.config_defaults import seed_config_defaults
+        with get_internal_session() as int_db:
+            seed_config_defaults(int_db)
+    except Exception as e:
+        logging.getLogger("refinet").warning(f"Config seed failed: {e}")
+
+    # ── Register event bus handlers ──────────────────────────────
+    from api.services.event_bus import EventBus
+    from api.routes.mcp_websocket import ws_manager
+    from api.services.webhook_delivery import deliver_bus_event
+
+    bus = EventBus.get()
+    # WebSocket broadcast for real-time UI updates
+    bus.subscribe("registry.*", ws_manager.broadcast_event)
+    bus.subscribe("messaging.*", ws_manager.broadcast_event)
+    # Webhook delivery for all event types
+    bus.subscribe("registry.*", deliver_bus_event)
+    bus.subscribe("messaging.*", deliver_bus_event)
+    bus.subscribe("system.*", deliver_bus_event)
+    # Knowledge base events — reactive system for GROOT awareness
+    bus.subscribe("knowledge.*", ws_manager.broadcast_event)
+    bus.subscribe("knowledge.*", deliver_bus_event)
+    from api.services.knowledge_refresh import on_knowledge_change
+    bus.subscribe("knowledge.*", on_knowledge_change)
+    logging.getLogger("refinet").info("Event bus handlers registered (registry + messaging + system + knowledge → WS + webhooks + GROOT refresh)")
+
+    # ── Start SMTP bridge (if enabled) ───────────────────────────
+    try:
+        from api.config import get_settings as _get_settings
+        settings = _get_settings()
+        if settings.smtp_enabled:
+            from api.services.smtp_bridge import start_smtp_server
+            await start_smtp_server(host=settings.smtp_host, port=settings.smtp_port)
+    except Exception as e:
+        logging.getLogger("refinet").warning(f"SMTP bridge not started: {e}")
+
+    # ── Start gRPC server (if available) ─────────────────────────
+    try:
+        from api.grpc.grpc_server import start_grpc_server
+        _grpc_task = asyncio.create_task(start_grpc_server(port=50051))
+        logging.getLogger("refinet").info("gRPC server task created (port 50051)")
+    except Exception as e:
+        logging.getLogger("refinet").warning(f"gRPC server not started: {e}")
+
+    # ── Start P2P cleanup task ────────────────────────────────────
+    async def _p2p_cleanup_loop():
+        from api.services.p2p import P2PNetwork
+        while True:
+            await asyncio.sleep(60)
+            try:
+                P2PNetwork.get().cleanup_stale_peers()
+            except Exception:
+                pass
+
+    _cleanup_task = asyncio.create_task(_p2p_cleanup_loop())
+
+    # ── Start uptime monitor ──────────────────────────────────────
+    async def _monitor_loop():
+        from api.services.monitor import run_health_check
+        from api.database import get_internal_session
+        while True:
+            await asyncio.sleep(60)
+            try:
+                int_db = next(get_internal_session())
+                try:
+                    await run_health_check(int_db)
+                    int_db.commit()
+                finally:
+                    int_db.close()
+            except Exception as e:
+                logging.getLogger("refinet").error(f"Monitor error: {e}")
+
+    _monitor_task = asyncio.create_task(_monitor_loop())
+
+    # ── Auth cleanup task (nonces + refresh tokens) ─────────────────
+    async def _auth_cleanup_loop():
+        from api.auth.siwe import cleanup_expired_nonces
+        from api.auth.jwt import cleanup_expired_refresh_tokens
+        from api.database import get_public_session
+        while True:
+            await asyncio.sleep(3600)  # Every hour
+            try:
+                with get_public_session() as db:
+                    nonces = cleanup_expired_nonces(db)
+                    tokens = cleanup_expired_refresh_tokens(db)
+                    db.commit()
+                    if nonces or tokens:
+                        logging.getLogger("refinet").info(
+                            f"Auth cleanup: {nonces} nonces, {tokens} refresh tokens removed"
+                        )
+            except Exception as e:
+                logging.getLogger("refinet").error(f"Auth cleanup error: {e}")
+
+    _auth_cleanup_task = asyncio.create_task(_auth_cleanup_loop())
+    logging.getLogger("refinet").info("Uptime monitor started (60s interval)")
+
+    # ── Start webhook delivery worker ─────────────────────────────
+    from api.services.webhook_delivery import webhook_worker
+    _webhook_task = asyncio.create_task(webhook_worker())
+    logging.getLogger("refinet").info("Webhook delivery worker started")
+
+    yield
+
+    # ── Shutdown ─────────────────────────────────────────────────
+    _cleanup_task.cancel()
+    _monitor_task.cancel()
+    _webhook_task.cancel()
+    if _grpc_task:
+        _grpc_task.cancel()
+        try:
+            from api.grpc.grpc_server import stop_grpc_server
+            await stop_grpc_server()
+        except Exception:
+            pass
+    try:
+        from api.services.smtp_bridge import stop_smtp_server
+        await stop_smtp_server()
+    except Exception:
+        pass
+    logging.getLogger("refinet").info("Shutting down")
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="REFINET Cloud",
+        description="Grass Root Project Intelligence — Sovereign AI Infrastructure",
+        version="2.0.0",
+        lifespan=lifespan,
+        docs_url="/docs",
+        redoc_url="/redoc",
+    )
+
+    # ── Middleware (order matters — last added = first executed) ────
+    app.add_middleware(LoggingMiddleware)
+    app.add_middleware(RequestSizeMiddleware)
+    add_cors(app)
+
+    # Rate limiter
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    # ── Core Routers ─────────────────────────────────────────────
+    from api.routes.health import router as health_router
+    from api.routes.auth import router as auth_router
+    from api.routes.inference import router as inference_router
+    from api.routes.devices import router as devices_router
+    from api.routes.agents import router as agents_router
+    from api.routes.webhooks import router as webhooks_router
+    from api.routes.mcp import router as mcp_router
+    from api.routes.keys import router as keys_router
+    from api.routes.admin import router as admin_router
+    from api.routes.knowledge import router as knowledge_router
+    from api.routes.identity import router as identity_router
+    from api.routes.messaging import router as messaging_router
+    from api.routes.p2p import router as p2p_router
+
+    app.include_router(health_router)
+    app.include_router(auth_router)
+    app.include_router(identity_router)
+    app.include_router(messaging_router)
+    app.include_router(p2p_router)
+    app.include_router(inference_router)
+    app.include_router(devices_router)
+    app.include_router(agents_router)
+    app.include_router(webhooks_router)
+    app.include_router(mcp_router)
+    app.include_router(keys_router)
+    app.include_router(admin_router)
+    app.include_router(knowledge_router)
+
+    # ── Registry Routes (REST API) ───────────────────────────────
+    from api.routes.registry import router as registry_router
+    app.include_router(registry_router)
+
+    # ── GROOT Brain Routes (Contract Repository + Explore) ────────
+    from api.routes.repo import router as repo_router
+    from api.routes.explore import router as explore_router
+    app.include_router(repo_router)
+    app.include_router(explore_router)
+
+    # ── WebSocket Routes ─────────────────────────────────────────
+    from api.routes.mcp_websocket import router as ws_router
+    app.include_router(ws_router)
+
+    # ── GraphQL (Strawberry) ─────────────────────────────────────
+    try:
+        from api.routes.mcp_graphql import graphql_app
+        app.include_router(graphql_app, prefix="/graphql")
+        logging.getLogger("refinet").info("GraphQL endpoint mounted at /graphql")
+    except ImportError as e:
+        logging.getLogger("refinet").warning(f"GraphQL not available: {e}")
+
+    # ── SOAP (spyne via WSGIMiddleware) ──────────────────────────
+    try:
+        from api.routes.mcp_soap import get_soap_wsgi_app
+        soap_wsgi = get_soap_wsgi_app()
+        if soap_wsgi:
+            from starlette.middleware.wsgi import WSGIMiddleware
+            app.mount("/soap", WSGIMiddleware(soap_wsgi))
+            logging.getLogger("refinet").info("SOAP endpoint mounted at /soap")
+    except ImportError as e:
+        logging.getLogger("refinet").warning(f"SOAP not available: {e}")
+
+    return app
+
+
+app = create_app()

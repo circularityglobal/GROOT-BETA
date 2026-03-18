@@ -1,0 +1,64 @@
+version: '3.8'
+
+# REFINET Cloud — Local Development Environment
+# NOT for production. Production uses systemd directly.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8000:8000"
+      - "50051:50051"  # gRPC
+    volumes:
+      - ./api:/app/api
+      - ./data:/opt/refinet/data
+    env_file: .env
+    environment:
+      - PUBLIC_DB_URL=sqlite:////opt/refinet/data/public.db
+      - INTERNAL_DB_URL=sqlite:////opt/refinet/data/internal.db
+      - GRPC_PORT=50051
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    command: npm run dev
+
+  # ── Product Subdomains ──────────────────────────────────────────
+  # Uncomment and configure when repos are integrated.
+  #
+  # REFINET Pillars (infrastructure.refinet.io)
+  # pillars:
+  #   build:
+  #     context: ./products/pillars/repo
+  #   ports:
+  #     - "3001:3000"
+  #   volumes:
+  #     - ./products/pillars/repo:/app
+  #     - /app/node_modules
+  #   environment:
+  #     - NEXT_PUBLIC_API_URL=http://localhost:8000
+  #   command: npm run dev
+  #
+  # REFINET Browser (browser.refinet.io)
+  # browser:
+  #   build:
+  #     context: ./products/browser/repo
+  #   ports:
+  #     - "3002:3000"
+  #   volumes:
+  #     - ./products/browser/repo:/app
+  #     - /app/node_modules
+  #   environment:
+  #     - NEXT_PUBLIC_API_URL=http://localhost:8000
+  #   command: npm run dev
