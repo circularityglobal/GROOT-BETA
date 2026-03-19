@@ -331,6 +331,147 @@ Usage: python3 scripts/seed_knowledge.py --api-url https://api.refinet.io --toke
 
 ---
 
+## PROMPT 11 — Agent Engine Dashboard
+
+```
+The REFINET Cloud frontend needs an Agent Engine management page at frontend/app/agents/page.tsx.
+
+This page should allow users to:
+
+1. View registered agents:
+   - Card grid showing agent name, product, version, status (online/offline based on last heartbeat)
+   - Green/gray status dot (online if heartbeat within last 5 min)
+   - Show SOUL identity summary if one is assigned
+
+2. Agent detail view:
+   - SOUL.md display (rendered markdown) with edit capability
+   - Memory browser: tabs for Working, Episodic, Semantic, Procedural memories
+   - Task history: list of recent tasks with status (pending/running/completed/failed)
+   - Task detail: execution steps with phase labels (PERCEIVE, PLAN, ACT, OBSERVE, REFLECT, STORE)
+
+3. Task submission:
+   - Text input for task description
+   - Submit button that calls POST /agents/{id}/run
+   - Real-time status updates
+
+4. Delegation viewer:
+   - Visual chain of delegated tasks between agents
+   - Show delegation policy (none/approve/auto) per agent
+
+API endpoints to use:
+- GET /agents — list agents
+- POST /agents/{id}/soul — create/update SOUL
+- GET /agents/{id}/soul — get SOUL
+- POST /agents/{id}/run — submit task
+- GET /agents/{id}/tasks — list tasks
+- GET /agents/{id}/tasks/{task_id}/steps — get execution steps
+
+Add an "Agents" sidebar item under the Core section in client-layout.tsx.
+Match the existing design system (teal accents, card components, JetBrains Mono for code).
+```
+
+---
+
+## PROMPT 12 — DApp Factory & App Store UI
+
+```
+Create two new frontend pages for the DApp Factory and App Store:
+
+1. DApp Builder (frontend/app/dapps/page.tsx):
+   - Template browser: grid of available DApp templates fetched from GET /dapp/templates
+   - Each template card shows: name, description, required contract type, preview image
+   - Build wizard: select template → configure chain/address/ABI → submit build
+   - Build history: list of user's builds from GET /dapp/builds with status badges (building/ready/failed)
+   - Download button for completed builds: GET /dapp/builds/{id}/download
+
+2. App Store (frontend/app/store/page.tsx):
+   - Browse published apps by category (dapp, agent, tool, template)
+   - Search and filter by chain, category, rating
+   - App detail cards: name, publisher, description, install count, rating
+   - Install/download action
+   - "Publish" button for developers to submit their own listings
+
+API endpoints:
+- GET /dapp/templates — list templates
+- POST /dapp/build — start a build
+- GET /dapp/builds — list user builds
+- GET /dapp/builds/{id}/download — download build output
+- GET /app-store/listings — browse published apps
+- POST /app-store/listings — publish a listing
+
+Add "DApps" and "Store" sidebar items under the Build section.
+Follow existing design patterns: card grids, teal accents, hover glow effects.
+```
+
+---
+
+## PROMPT 13 — Chain Listener Configuration UI
+
+```
+Create a chain event monitoring page at frontend/app/chain/page.tsx:
+
+1. Active Watchers:
+   - Table showing configured event watchers with columns: name, chain, contract address, event signature, status (active/paused)
+   - Toggle to enable/disable each watcher
+   - Delete button with confirmation
+
+2. Create Watcher:
+   - Form with fields: name, chain (dropdown), contract address, event signature (auto-suggest from registry ABIs)
+   - Webhook URL for event delivery
+   - Optional block range filters
+
+3. Event Log:
+   - Real-time feed of detected events
+   - Each event card: block number, transaction hash, event name, decoded parameters
+   - Link to block explorer for each transaction
+
+API endpoints:
+- GET /chain/watchers — list watchers
+- POST /chain/watchers — create watcher
+- PUT /chain/watchers/{id} — update watcher
+- DELETE /chain/watchers/{id} — delete watcher
+- GET /chain/events — list detected events
+
+Add "Chain" sidebar item under the Build section.
+Use monospace font for addresses and hashes. Color-code chain names using the existing CHAIN_COLORS map.
+```
+
+---
+
+## PROMPT 14 — Projects Dashboard Enhancement
+
+```
+The Projects page at frontend/app/projects/page.tsx is already implemented with:
+- User's project collection from GET /registry/users/{username}/projects
+- Getting Started guide when no projects exist
+- Project cards with chain/category/visibility badges
+
+Enhance it with:
+
+1. Project stats:
+   - Total stars across all projects
+   - Total forks
+   - Most popular project
+   - Display as a mini stats row above the grid (similar to dashboard MiniStat component)
+
+2. Quick actions per project:
+   - "Build DApp" button that links to /dapps/ with the project pre-selected
+   - "View in Registry" link
+   - "Settings" gear icon linking to project settings
+
+3. Sort and filter:
+   - Sort by: recently updated, most stars, alphabetical
+   - Filter by: chain, category, visibility (public/private)
+
+4. Empty state enhancement:
+   - Add an animated illustration (CSS-only, no external assets)
+   - Add quick-start code snippet showing how to create a project via API
+
+Keep the existing Getting Started guide for zero-project state. Add the filters and stats only when projects exist.
+```
+
+---
+
 ## HOW TO USE THESE PROMPTS
 
 1. Get REFINET Cloud running locally:

@@ -28,7 +28,9 @@ GROOT serves five roles simultaneously:
 
 **Network Intelligence.** Any device, agent, or service that can send an HTTP request can connect to REFINET Cloud, register itself, and participate in the network. IoT sensors push telemetry. Industrial controllers receive commands. Blockchain nodes report status. Autonomous software agents register, authenticate, and request intelligence on demand. GROOT is the cognitive layer that ties the network together.
 
-**Communication Intelligence.** GROOT powers a wallet-to-wallet messaging system where users communicate using their blockchain identities. Direct messages, group conversations, email bridging, P2P presence, and ENS-resolved identities — all integrated into the same sovereign platform.
+**Agent Intelligence.** GROOT powers an autonomous multi-agent platform where agents operate with persistent identity (SOUL.md), 4-tier memory (working, episodic, semantic, procedural), and a 6-phase cognitive loop (PERCEIVE → PLAN → ACT → OBSERVE → REFLECT → STORE). Agents access platform tools through the MCP gateway, delegate subtasks to other agents, and learn from past interactions. Built-in archetypes include contract analysis, knowledge curation, platform operations, and DApp building.
+
+**Communication Intelligence.** GROOT powers a wallet-to-wallet messaging system where users communicate using their blockchain identities. Direct messages, group conversations, email bridging, cross-platform messenger bridge, P2P presence, and ENS-resolved identities — all integrated into the same sovereign platform.
 
 ---
 
@@ -126,6 +128,10 @@ The **Smart Contract Registry** gives developers a GitHub-style experience for m
 
 The **GROOT Brain** personal repository lets developers upload contracts with automatic ABI parsing, access control detection, dangerous operation flagging, and per-function SDK generation — all while keeping source code private.
 
+The **DApp Factory** lets developers assemble downloadable DApp projects from registry contracts using pre-built templates (token-dashboard, nft-gallery, staking-ui, dao-voter, multi-send). Configure chain, address, and ABI — then download a ready-to-customize project.
+
+The **App Store** provides a marketplace for publishing and discovering DApps, agents, tools, and templates built on the REFINET platform.
+
 ### 3.3 — Connected Devices and Agents
 
 Any device that can make an HTTP POST request is a potential participant in the REFINET network. The connection model is universal:
@@ -164,7 +170,7 @@ The inference engine runs on CPU. The database is embedded. The web server is op
 
 When a user talks to GROOT, the conversation does not transit through a third party. The data does not enter a training pipeline controlled by another organization.
 
-The platform operates two physically separate databases — one for user-facing operations (30+ tables), one for internal administration (10+ tables). The internal database is not accessible through any public interface. The administrative audit log is append-only and cannot be modified through any API endpoint.
+The platform operates two physically separate databases — one for user-facing operations (40+ tables), one for internal administration (12+ tables). The internal database is not accessible through any public interface. The administrative audit log is append-only and cannot be modified through any API endpoint.
 
 Custodial wallet private keys are never stored — only Shamir shares encrypted with per-wallet keys exist. Even a complete database compromise cannot reconstruct wallet keys without the server's encryption key.
 
@@ -210,13 +216,25 @@ Non-inference operations — webhooks, telemetry, authentication, device managem
 
 ---
 
-## 6. Roadmap
+## 6. What's Built & What's Next
 
-GROOT Intelligence is a living system. The following capabilities are in active development:
+### Recently Shipped
+
+**Agent Engine (v3.0).** Autonomous multi-agent platform with SOUL.md identity, 4-tier memory (working, episodic, semantic, procedural), 6-phase cognitive loop, MCP tool access, and agent-to-agent delegation. Five built-in archetypes: groot-chat, contract-analyst, knowledge-curator, platform-ops, dapp-builder.
+
+**DApp Factory.** Template-based DApp assembly from registry contracts. Five templates: token-dashboard, nft-gallery, staking-ui, dao-voter, multi-send. Build pipeline with downloadable ZIP output.
+
+**App Store.** Marketplace for publishing and discovering DApps, agents, tools, and templates with ratings, install tracking, and versioning.
+
+**Chain Listener.** On-chain event monitoring for EVM-compatible chains with configurable watchers and webhook-triggered backend actions.
+
+**Task Scheduler & Script Runner.** Cron-like background task execution with safe script runner supporting 23 operational scripts across 5 categories (analysis, maintenance, ops, chain, dapp).
+
+**Projects Dashboard.** User-facing project collection page with getting-started guide for new users.
+
+### Roadmap
 
 **Multi-model routing.** As additional open-source models become available in efficient architectures, GROOT will route queries to the most appropriate model based on task complexity, with the current model serving as the default general-purpose layer.
-
-**Federated agent tools.** Agents connected to REFINET Cloud will be able to advertise their capabilities as tools that other agents can invoke. A QuickCast content agent could be called by an AgentOS research agent, with REFINET Cloud handling discovery, authentication, and routing.
 
 **Contract execution simulation.** CAG will extend beyond retrieval to include simulated contract execution — allowing GROOT to explain not just what a contract does, but what would happen if a specific transaction were submitted with specific parameters.
 
@@ -232,9 +250,11 @@ GROOT Intelligence is a living system. The following capabilities are in active 
 
 **Developers:** Read the API documentation at `app.refinet.io/docs`. Connect your wallet, generate an API key, and make your first call in under five minutes. Choose your protocol: REST, GraphQL, gRPC, SOAP, or WebSocket.
 
-**Contract Developers:** Upload your ABIs to GROOT Brain at `app.refinet.io/repo`. GROOT will parse, analyze, and generate SDK definitions automatically. Browse the public registry at `app.refinet.io/explore`.
+**Contract Developers:** Upload your ABIs to GROOT Brain at `app.refinet.io/repo`. GROOT will parse, analyze, and generate SDK definitions automatically. Browse the public registry at `app.refinet.io/explore`. Build DApps from your contracts at `app.refinet.io/dapps`.
 
-**Partners:** Subscribe to webhook events for async integration. Register devices and agents for network participation.
+**Agent Developers:** Register agents via `POST /agents`, assign a SOUL identity, and submit tasks. Agents run autonomously through the cognitive loop with access to platform tools via MCP. See [AGENT_ENGINE.md](AGENT_ENGINE.md) for the full architecture.
+
+**Partners:** Subscribe to webhook events for async integration. Register devices and agents for network participation. Monitor on-chain events via the chain listener.
 
 **Devices:** Any HTTP-capable device can register via `POST /devices` with a provisioned key. No SDK required.
 

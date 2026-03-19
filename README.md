@@ -2,7 +2,7 @@
 
 **Grass Root Project Intelligence**
 
-REFINET Cloud is the sovereign cloud infrastructure for the Regenerative Finance Network. It provides free, OpenAI-compatible AI inference powered by BitNet, a GitHub-style smart contract registry, wallet-to-wallet encrypted messaging, multi-chain identity management, IoT device connectivity, and a 6-protocol MCP gateway — all running on permanently free infrastructure with zero recurring costs.
+REFINET Cloud is the sovereign cloud infrastructure for the Regenerative Finance Network. It provides free, OpenAI-compatible AI inference powered by BitNet, a multi-agent autonomous engine, a GitHub-style smart contract registry, DApp factory, app store, wallet-to-wallet encrypted messaging, multi-chain identity management, on-chain event automation, IoT device connectivity, and a 6-protocol MCP gateway — all running on permanently free infrastructure with zero recurring costs.
 
 ## What is Groot?
 
@@ -20,6 +20,14 @@ Groot is augmented with two knowledge systems:
 - RAG + CAG context injection
 - Anonymous access (25 req/day) and authenticated tiers (250+ req/day)
 
+### Agent Engine
+- Autonomous multi-agent platform with persistent identity (SOUL.md)
+- 6-phase cognitive loop: PERCEIVE → PLAN → ACT → OBSERVE → REFLECT → STORE
+- 4-tier memory system: Working (TTL), Episodic (events), Semantic (facts + embeddings), Procedural (strategies)
+- Tool access via MCP gateway with glob-pattern permissions
+- Agent-to-agent delegation with configurable policies (none/approve/auto)
+- Built-in archetypes: groot-chat, contract-analyst, knowledge-curator, platform-ops, dapp-builder
+
 ### Smart Contract Registry
 - GitHub-style project management (create, star, fork)
 - ABI upload, parsing, and verification
@@ -35,6 +43,24 @@ Groot is augmented with two knowledge systems:
 - Per-function SDK enable/disable
 - Source code privacy — GROOT never reads source code, only ABIs and SDKs
 
+### DApp Factory
+- Template-based DApp assembly from registry contracts
+- Pre-built templates: token-dashboard, nft-gallery, staking-ui, dao-voter, multi-send
+- Configurable chain, contract address, and ABI settings
+- Downloadable project output (ZIP) for local customization
+
+### App Store
+- Publish and discover DApps, agents, tools, and templates
+- Category-based browsing with ratings and install tracking
+- Version management with changelogs
+- Developer profiles and publishing workflow
+
+### Chain Listener
+- On-chain event monitoring for EVM-compatible chains
+- Configurable event filters by contract address, event signature, and chain
+- Webhook-triggered backend actions on blockchain events
+- Block tracking and reorg handling
+
 ### Multi-Chain Wallet Identity
 - Wallet records per chain with pseudo-IPv6 network addresses
 - ENS resolution (name, avatar, text records) with caching
@@ -45,18 +71,19 @@ Groot is augmented with two knowledge systems:
 ### Messaging
 - Wallet-to-wallet direct messages and group conversations
 - Email alias routing (SMTP bridge on port 8025)
+- Messenger bridge for cross-platform message relay
 - Typing indicators and read receipts
 - P2P presence and peer discovery with gossip protocol
 
 ### Knowledge Base
 - Multi-format upload: PDF, DOCX, XLSX, CSV, TXT, Markdown, JSON, Solidity
 - Auto-chunking with sentence-transformer embeddings (384-dim)
-- Hybrid search: semantic similarity + keyword scoring
+- Hybrid search: semantic similarity + keyword scoring + FTS5 full-text indexing
 - Document comparison, timeline extraction, auto-tagging
 - YouTube transcript and URL ingestion
 
 ### 6-Protocol MCP Gateway
-- **REST** — FastAPI with 100+ endpoints across 17 route groups
+- **REST** — FastAPI with 210+ endpoints across 22 route groups
 - **GraphQL** — Strawberry GraphQL at `/graphql`
 - **gRPC** — Port 50051 with registry service methods
 - **SOAP** — Spyne at `/soap` via WSGI middleware
@@ -68,6 +95,12 @@ Groot is augmented with two knowledge systems:
 - ECDSA signature verification for telemetry
 - Product agent management (QuickCast, AgentOS)
 - Remote configuration distribution
+
+### Task Scheduler & Script Runner
+- Cron-like scheduled task execution with configurable intervals
+- Health monitoring, P2P cleanup, auth cleanup, agent memory cleanup
+- Safe script execution engine with category-based access control
+- 23 operational scripts: analysis, maintenance, ops, chain, DApp utilities
 
 ## For Users
 
@@ -91,7 +124,7 @@ response = client.chat.completions.create(
 )
 ```
 
-### API Surface (100+ endpoints)
+### API Surface (210+ endpoints across 22 route groups)
 
 | Route Group | Endpoints | Auth |
 |---|---|---|
@@ -99,7 +132,7 @@ response = client.chat.completions.create(
 | `/auth/*` | 19 | Varies |
 | `/v1/*` | 3 | JWT or API key |
 | `/devices/*` | 6 | JWT or device key |
-| `/agents/*` | 4 | JWT or build key |
+| `/agents/*` | 12+ | JWT or build key |
 | `/webhooks/*` | 5 | JWT |
 | `/mcp/*` | 3 | JWT |
 | `/keys/*` | 4 | JWT |
@@ -111,13 +144,16 @@ response = client.chat.completions.create(
 | `/identity/*` | 4+ | JWT |
 | `/messages/*` | 8+ | JWT |
 | `/p2p/*` | 3 | JWT |
+| `/chain/*` | 6+ | JWT |
+| `/dapp/*` | 5+ | JWT |
+| `/app-store/*` | 8+ | JWT |
 | `/graphql` | 1 | JWT or API key |
 | `/soap` | 1 | JWT or API key |
 | `/ws` | 1 | JWT or API key |
 
 ## For Agents
 
-QuickCast, AgentOS, and any REFINET product connects to REFINET Cloud as its default LLM provider. Agents authenticate with build keys and register via `POST /agents`.
+QuickCast, AgentOS, and any REFINET product connects to REFINET Cloud as its default LLM provider. Agents authenticate with build keys and register via `POST /agents`. The Agent Engine enables autonomous operation with SOUL.md identity, 4-tier memory, tool access, and agent-to-agent delegation. See [docs/AGENT_ENGINE.md](docs/AGENT_ENGINE.md) for the full architecture.
 
 ## For Devices
 
@@ -148,14 +184,29 @@ Any device that can send HTTP POST requests can register, send telemetry, and re
 |---|---|
 | Backend | FastAPI 0.115.x + SQLAlchemy 2.0 + SQLite (WAL, dual DB) |
 | Inference | BitNet b1.58 2B4T via bitnet.cpp (CPU-native, ARM-optimized) |
+| Agent Engine | 6-phase cognitive loop + 4-tier memory + SOUL.md identity + MCP tool dispatch |
 | Frontend | Next.js 14 App Router + React 18 + TypeScript + Tailwind CSS |
-| Web3 | wagmi + viem (native wallet connectors, no WalletConnect) + web3.py + eth-account (backend) |
+| Web3 | wagmi + viem (native wallet connectors, SIWE) + web3.py + eth-account (backend) |
 | Auth | Argon2id + PyJWT + pyotp + SIWE (EIP-4361) |
 | Encryption | cryptography (AES-256-GCM, HKDF, Shamir SSS) |
-| Embeddings | sentence-transformers (384-dim, semantic search) |
+| Embeddings | sentence-transformers (384-dim, semantic search) + FTS5 full-text indexing |
 | Protocols | REST + GraphQL (Strawberry) + gRPC + SOAP (Spyne) + WebSocket + Webhooks |
+| Scheduler | Background task scheduler with health monitoring + script runner |
 | TLS | Let's Encrypt via Certbot |
 | Server | Oracle Cloud ARM A1 Flex (4 OCPUs, 24GB RAM, 200GB storage) |
+
+## Documentation
+
+| Document | Description |
+|---|---|
+| [GROOT.md](GROOT.md) | Master architecture document — constraints, stack, subsystems, cardinal rules |
+| [docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md](docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md) | Full technical specification — infrastructure, database, auth, protocols |
+| [docs/GROOT_INTELLIGENCE_WHITEPAPER.md](docs/GROOT_INTELLIGENCE_WHITEPAPER.md) | GROOT Intelligence whitepaper — capabilities, science, vision |
+| [docs/AGENT_ENGINE.md](docs/AGENT_ENGINE.md) | Agent Engine architecture — SOUL identity, memory, cognitive loop, tools |
+| [docs/AGENTS.md](docs/AGENTS.md) | Built-in agent archetypes — groot-chat, contract-analyst, knowledge-curator, platform-ops, dapp-builder |
+| [docs/SOUL_FORMAT.md](docs/SOUL_FORMAT.md) | SOUL.md format specification — agent identity, goals, constraints, tools, delegation |
+| [docs/SAFETY.md](docs/SAFETY.md) | Platform-wide agent safety constraints — hard rules all agents must respect |
+| [docs/HEARTBEAT.md](docs/HEARTBEAT.md) | System heartbeat protocol — health checks, scheduled tasks, uptime tracking |
 
 ## Infrastructure
 

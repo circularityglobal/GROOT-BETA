@@ -8,7 +8,7 @@
 
 This document describes the complete technical architecture of REFINET Cloud, a sovereign AI infrastructure platform that provides OpenAI-compatible inference, a GitHub-style smart contract registry, wallet-to-wallet messaging, multi-chain identity management, IoT device connectivity, and a 6-protocol MCP gateway — all operating within the permanent free-tier constraints of a single ARM cloud instance with zero recurring infrastructure costs.
 
-The platform consists of seven primary subsystems: (1) a 1-bit large language model inference server running natively on ARM CPU with RAG and CAG augmentation, (2) a dual-database persistence layer with 40+ tables across physically separated security domains, (3) a wallet-first authentication system with SIWE, optional password/TOTP, and custodial wallet support via Shamir Secret Sharing, (4) a smart contract registry with ABI parsing, SDK generation, and public exploration, (5) a wallet-to-wallet messaging system with P2P presence, email bridging, and group conversations, (6) a multi-chain identity layer with ENS resolution and pseudo-IPv6 addressing, and (7) a 6-protocol MCP gateway supporting REST, GraphQL, gRPC, SOAP, WebSocket, and Webhooks.
+The platform consists of twelve primary subsystems: (1) a 1-bit large language model inference server running natively on ARM CPU with RAG and CAG augmentation, (2) a dual-database persistence layer with 50+ tables across physically separated security domains, (3) a wallet-first authentication system with SIWE, optional password/TOTP, and custodial wallet support via Shamir Secret Sharing, (4) a smart contract registry with ABI parsing, SDK generation, and public exploration, (5) a wallet-to-wallet messaging system with P2P presence, email bridging, and group conversations, (6) a multi-chain identity layer with ENS resolution and pseudo-IPv6 addressing, (7) a 6-protocol MCP gateway supporting REST, GraphQL, gRPC, SOAP, WebSocket, and Webhooks, (8) an autonomous multi-agent engine with persistent identity, 4-tier memory, and tool access, (9) a DApp factory with template-based assembly, (10) an app store for publishing and discovering platform extensions, (11) an on-chain event listener for blockchain automation, and (12) a task scheduler with safe script execution.
 
 This document is intended for internal engineering reference, security audit, and academic evaluation.
 
@@ -100,10 +100,14 @@ All services run on a single machine, managed by systemd, communicating over loc
           │                                                     │
           │  ┌───────────────────────────────────────────────┐  │
           │  │ Background Workers                             │  │
-          │  │ ├── P2P cleanup (60s)                          │  │
-          │  │ ├── Health monitor (60s)                       │  │
-          │  │ ├── Auth cleanup (3600s)                       │  │
+          │  │ ├── TaskScheduler (10s tick)                   │  │
+          │  │ │   ├── Health monitor (60s)                   │  │
+          │  │ │   ├── P2P cleanup (60s)                      │  │
+          │  │ │   ├── Auth cleanup (3600s)                   │  │
+          │  │ │   └── Agent memory cleanup (300s)            │  │
           │  │ ├── Webhook delivery (async queue)             │  │
+          │  │ ├── Chain listener (event polling)             │  │
+          │  │ ├── Script runner (on-demand)                  │  │
           │  │ └── SMTP bridge (:8025)                       │  │
           │  └───────────────────────────────────────────────┘  │
           │         │              │             │              │
@@ -111,8 +115,8 @@ All services run on a single machine, managed by systemd, communicating over loc
           │    │public.db│   │internal │  │Embeddings│        │
           │    │(SQLite) │   │.db      │  │(sentence-│        │
           │    │WAL mode │   │(SQLite) │  │transform)│        │
-          │    │ 30+ tbl │   │WAL mode │  │ 384-dim  │        │
-          │    └─────────┘   │ 10+ tbl │  └──────────┘        │
+          │    │ 40+ tbl │   │WAL mode │  │ 384-dim  │        │
+          │    └─────────┘   │ 12+ tbl │  └──────────┘        │
           │                  └─────────┘                       │
           └────────────┬──────────────────┬───────────────────┘
                        │                  │
@@ -284,6 +288,25 @@ Two physically separate SQLite files in WAL (Write-Ahead Logging) mode:
 | contract_functions | Parsed ABI functions (access, mutability, selectors, danger flags) | 25,000 |
 | contract_events | Parsed ABI events (topic hashes, indexed params) | 10,000 |
 | sdk_definitions | Generated SDK JSON (what GROOT reads and MCP exposes) | 5,000 |
+| **Agent Engine** | | |
+| agent_souls | SOUL.md identity documents per agent | 500 |
+| agent_memory_working | Short-lived per-task context with TTL | 5,000 |
+| agent_memory_episodic | Timestamped event records (what happened, outcome) | 50,000 |
+| agent_memory_semantic | Learned facts with confidence scores + 384-dim embeddings | 10,000 |
+| agent_memory_procedural | Strategy patterns with trigger conditions and success rates | 2,000 |
+| agent_tasks | Task tracking (pending/running/completed/failed) with execution trace | 10,000 |
+| agent_delegations | Delegation chains between agents | 1,000 |
+| **DApp Factory** | | |
+| dapp_builds | DApp assembly records (template, config, status, output) | 2,000 |
+| **App Store** | | |
+| app_listings | Published DApps, agents, tools, templates | 500 |
+| app_installs | Per-user install tracking | 5,000 |
+| app_reviews | User ratings and reviews | 2,000 |
+| **Chain Listener** | | |
+| chain_watchers | Configured on-chain event monitors | 500 |
+| chain_events | Detected blockchain events with decoded parameters | 50,000 |
+| **Messenger Bridge** | | |
+| bridge_connections | Cross-platform messaging bridge configurations | 200 |
 
 **`/opt/refinet/data/internal.db`** — Admin-only data, never accessible through any public API endpoint:
 
@@ -298,6 +321,8 @@ Two physically separate SQLite files in WAL (Write-Ahead Logging) mode:
 | health_check_log | System uptime tracking (inference, DB, SMTP latency) | Admin API |
 | custodial_wallets | Server-managed EVM wallets (Shamir 5-of-3, encrypted salt) | Internal only |
 | wallet_shares | Individual SSS encrypted shares (AES-256-GCM, per-share index) | Internal only |
+| scheduled_tasks | Cron-like task definitions (handler, interval, enabled, last_run) | Admin API |
+| script_executions | Script run records with output, errors, and timing | Admin API |
 
 The internal database file has restricted filesystem permissions (600, owned by the application user). The `admin_audit_log` table is structurally append-only: no UPDATE or DELETE SQL statements for this table exist anywhere in the codebase.
 
@@ -664,7 +689,126 @@ Supported formats and their parsers:
 
 ---
 
-## 12. Device and Agent Connectivity
+## 12. Agent Engine
+
+### 12.1 — Architecture
+
+The Agent Engine transforms GROOT from a stateless inference endpoint into a multi-agent autonomous platform. Each agent has a persistent SOUL identity, 4-tier memory, tool access via the MCP gateway, and delegation capability.
+
+```
+Agent Registration (existing)
+  └── SOUL.md (identity, goals, constraints, tools, delegation policy)
+  └── 4-Tier Memory
+  │     ├── Working (per-task, TTL, auto-cleaned)
+  │     ├── Episodic (timestamped events with outcomes)
+  │     ├── Semantic (learned facts + 384-dim embeddings, deduped)
+  │     └── Procedural (strategy patterns with success rates)
+  └── Cognitive Loop
+  │     └── PERCEIVE → PLAN → ACT → OBSERVE → REFLECT → STORE
+  └── Tool Access (MCP gateway dispatch_tool())
+  └── Delegation (agent-to-agent, max depth 3)
+```
+
+### 12.2 — Cognitive Loop
+
+Every agent task runs through a 6-phase loop, each phase backed by BitNet inference:
+
+1. **PERCEIVE** — Parse task, recall memories from all 4 tiers, build situation awareness
+2. **PLAN** — Generate structured JSON plan with steps, referencing tools and past procedures
+3. **ACT** — Execute plan steps: tool calls via MCP `dispatch_tool()` or reasoning
+4. **OBSERVE** — Evaluate results against expectations
+5. **REFLECT** — Extract lessons learned, identify new facts and strategy improvements
+6. **STORE** — Persist episodic/semantic/procedural memories, clear working memory
+
+### 12.3 — Safety Constraints
+
+Platform-wide constraints apply to all agents regardless of SOUL configuration (see [SAFETY.md](SAFETY.md)):
+- Never expose private keys or secrets
+- Never bypass authentication or escalate privileges
+- Never execute destructive on-chain operations autonomously
+- Max delegation depth of 3 to prevent unbounded recursion
+
+### 12.4 — Built-in Archetypes
+
+Five ready-to-use SOUL templates (see [AGENTS.md](AGENTS.md)):
+- `groot-chat` — Conversational AI for platform Q&A
+- `contract-analyst` — Smart contract security review
+- `knowledge-curator` — Knowledge base coverage monitoring
+- `platform-ops` — System health and maintenance
+- `dapp-builder` — DApp assembly from registry contracts
+
+---
+
+## 13. DApp Factory
+
+### 13.1 — Template System
+
+The DApp Factory assembles downloadable DApp projects from registry contracts:
+
+| Template | Description | Required Contract Type |
+|---|---|---|
+| token-dashboard | ERC-20 balance, transfer, approve UI | ERC-20 ABI |
+| nft-gallery | ERC-721/1155 gallery with metadata display | ERC-721/1155 ABI |
+| staking-ui | Stake/unstake/claim interface | Staking contract ABI |
+| dao-voter | Proposal creation and voting UI | Governor ABI |
+| multi-send | Batch transfer interface | Any token ABI |
+
+### 13.2 — Build Pipeline
+
+```
+Select Template → Configure (chain, address, ABI) → Assemble → Download ZIP
+    │                    │                              │            │
+    ▼                    ▼                              ▼            ▼
+GET /dapp/          POST /dapp/build              Background     GET /dapp/builds/
+templates           {template, config}            assembly       {id}/download
+```
+
+Build status transitions: `building` → `ready` (success) or `failed` (error).
+
+---
+
+## 14. App Store
+
+### 14.1 — Listing Model
+
+Published platform extensions with categories: `dapp`, `agent`, `tool`, `template`.
+
+Each listing includes: name, publisher, description, version, changelog, category, chain support, install count, and aggregate rating.
+
+### 14.2 — API
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/app-store/listings` | Browse/search published apps |
+| GET | `/app-store/listings/{id}` | Get listing detail |
+| POST | `/app-store/listings` | Publish a listing |
+| PUT | `/app-store/listings/{id}` | Update listing |
+| POST | `/app-store/listings/{id}/install` | Track install |
+| POST | `/app-store/listings/{id}/review` | Submit rating/review |
+
+---
+
+## 15. Chain Listener
+
+### 15.1 — Event Monitoring
+
+The chain listener monitors EVM-compatible blockchains for configured events and triggers backend actions:
+
+```
+Configure Watcher → Poll Chain RPC → Match Events → Trigger Webhook/Action
+       │                    │                │                    │
+       ▼                    ▼                ▼                    ▼
+  POST /chain/       Block-by-block     Event signature     POST to webhook URL
+  watchers           scanning            matching            or internal handler
+```
+
+### 15.2 — Safety
+
+Chain watchers may **detect** events but may **never** initiate state-changing on-chain transactions autonomously. This is enforced at the service layer (see [SAFETY.md](SAFETY.md)).
+
+---
+
+## 16. Device and Agent Connectivity
 
 ### 12.1 — Device Lifecycle
 
@@ -698,7 +842,7 @@ Remote config is a JSON blob that agents cache locally. Admins update config via
 
 ---
 
-## 13. Middleware & Cross-Cutting Concerns
+## 17. Middleware & Cross-Cutting Concerns
 
 | Middleware | Purpose | Configuration |
 |---|---|---|
@@ -710,20 +854,36 @@ Remote config is a JSON blob that agents cache locally. Admins update config via
 
 ---
 
-## 14. Background Workers
+## 18. Background Workers & Task Scheduler
+
+The `TaskScheduler` singleton ticks every 10 seconds and dispatches registered tasks:
 
 | Worker | Interval | Purpose |
 |---|---|---|
-| P2P cleanup | 60s | Remove stale peers (>2 min without heartbeat) |
 | Health monitor | 60s | Check inference, DB, SMTP; log to health_check_log |
+| P2P cleanup | 60s | Remove stale peers (>2 min without heartbeat) |
 | Auth cleanup | 3600s | Expire nonces (>10 min) and revoked refresh tokens |
+| Agent memory cleanup | 300s | Remove expired working memory entries |
 | Webhook delivery | Async queue | HMAC-signed delivery with exponential backoff retry |
+| Chain listener | Configurable | Block-by-block event polling per watcher |
+| Script runner | On-demand | Safe execution of categorized scripts (ops, maintenance, analysis, chain, dapp) |
 | SMTP bridge | Persistent | aiosmtpd server on port 8025 for email routing |
 | Event bus | Event-driven | In-process pub/sub with wildcard pattern matching |
 
+### 18.1 — Script Runner
+
+The script runner (`api/services/script_runner.py`) executes Python scripts from the `scripts/` directory with category-based access control. Agents can only run scripts their SOUL authorizes (e.g., `execute_script:maintenance.*`).
+
+Available script categories:
+- **analysis/** — Knowledge coverage, platform stats, registry reports, usage reports
+- **maintenance/** — Database backup, orphan cleanup, telemetry pruning, FTS rebuild, API counter reset, secret rotation
+- **ops/** — Database stats, health reports
+- **chain/** — ABI fetching, address monitoring, contract reading
+- **dapp/** — DApp building, template listing
+
 ---
 
-## 15. Network and Security Configuration
+## 19. Network and Security Configuration
 
 ### 15.1 — Nginx Reverse Proxy
 
@@ -776,7 +936,7 @@ All secrets reside in `/opt/refinet/app/.env` (mode 600). Secrets are never comm
 
 ---
 
-## 16. Capacity Planning
+## 20. Capacity Planning
 
 ### 16.1 — Resource Consumption at Scale
 
@@ -799,24 +959,25 @@ All secrets reside in `/opt/refinet/app/.env` (mode 600). Secrets are never comm
 
 ---
 
-## 17. Frontend Architecture
+## 21. Frontend Architecture
 
 ### 17.1 — Technology
 
 - **Framework**: Next.js 14 App Router with React 18 and TypeScript
 - **Output**: Static export (`next export`) → served by Nginx as flat files
 - **Styling**: Tailwind CSS with CSS custom properties for theming
-- **Web3**: ethers.js v6 for wallet connection and SIWE signing
-- **Animations**: Framer Motion for entrance effects
+- **Web3**: wagmi + viem for wallet connection and SIWE signing (native multi-wallet, no WalletConnect dependency)
+- **Animations**: CSS keyframes and transitions (no external animation library)
 
 ### 17.2 — Pages
 
 | Route | Purpose |
 |---|---|
 | `/` | Landing page with horizontal panels (Hero, Developers, Productivity, Browser, AgentOS) |
-| `/settings/` | Authentication/login page (SIWE flow) |
+| `/settings/` | Authentication/login page (SIWE flow via WagmiProvider) |
 | `/dashboard/` | User dashboard (stats, API keys, devices, recent activity) |
 | `/chat/` | Full-featured AI chat with document source selection and conversation history |
+| `/projects/` | User's project collection with getting-started guide |
 | `/explore/` | Public contract discovery (registry projects, smart contracts, knowledge search) |
 | `/repo/` | Personal contract repository management (@username namespace) |
 | `/knowledge/` | Knowledge base admin (upload, manage, compare, RAG search) |
@@ -849,7 +1010,7 @@ All secrets reside in `/opt/refinet/app/.env` (mode 600). Secrets are never comm
 
 ---
 
-## 18. Deployment Procedure
+## 22. Deployment Procedure
 
 ```bash
 # 1. Provision Oracle Cloud Always Free ARM A1 Flex (4 OCPU, 24GB RAM)
@@ -901,7 +1062,7 @@ curl https://api.refinet.io/health
 | Frontend | Next.js 14 (static export) | MIT | 14.2.x |
 | Frontend UI | React 18 + TypeScript | MIT | 18.x |
 | Styling | Tailwind CSS | MIT | 3.4.x |
-| Web3 (frontend) | ethers.js | MIT | 6.13.x |
+| Web3 (frontend) | wagmi + viem | MIT | 2.x / 2.x |
 | OS | Ubuntu 22.04 LTS (ARM64) | GPL-2.0 | — |
 
 Every component is open-source. No proprietary dependencies.
@@ -916,7 +1077,7 @@ Every component is open-source. No proprietary dependencies.
 | `/auth/*` | auth.py | 19 | Varies by step | No |
 | `/v1/*` | inference.py | 3 | JWT, API key, or anon | Yes |
 | `/devices/*` | devices.py | 6 | JWT or device key | No |
-| `/agents/*` | agents.py | 4 | JWT or build key | No |
+| `/agents/*` | agents.py | 12+ | JWT or build key | Yes (cognitive loop) |
 | `/webhooks/*` | webhooks.py | 5 | JWT | No |
 | `/mcp/*` | mcp.py | 3 | JWT | No (proxied) |
 | `/keys/*` | keys.py | 4 | JWT | No |
@@ -928,26 +1089,35 @@ Every component is open-source. No proprietary dependencies.
 | `/identity/*` | identity.py | 4+ | JWT | No |
 | `/messages/*` | messaging.py | 8+ | JWT | No |
 | `/p2p/*` | p2p.py | 3 | JWT | No |
+| `/chain/*` | chain.py | 6+ | JWT | No |
+| `/dapp/*` | dapp.py | 5+ | JWT | No |
+| `/app-store/*` | app_store.py | 8+ | JWT | No |
 | `/graphql` | mcp_graphql.py | 1 | JWT or API key | No |
 | `/soap` | mcp_soap.py | 1 | JWT or API key | No |
 | `/ws` | mcp_websocket.py | 1 | JWT or API key | No |
-| **Total** | **17 files** | **100+ endpoints** | | |
+| **Total** | **22 files** | **210+ endpoints** | | |
 
-Of 100+ endpoints, only 3 touch the inference server. All others operate at full FastAPI/SQLite speed (~500-1000 req/s).
+Of 210+ endpoints, only the inference route and agent cognitive loop touch the BitNet server. All others operate at full FastAPI/SQLite speed (~500-1000 req/s).
 
 ---
 
 ## Appendix C — Service Modules
 
-33 service modules in `api/services/`:
+42 service modules in `api/services/`:
 
 | Module | Purpose |
 |---|---|
 | abi_parser.py | ABI JSON parsing, function/event extraction, access control detection |
+| agent_engine.py | 6-phase cognitive loop, task execution, tool dispatch |
+| agent_memory.py | 4-tier memory CRUD (working, episodic, semantic, procedural) |
+| agent_soul.py | SOUL.md parsing, validation, tool permission checking |
+| app_store.py | App listing CRUD, install tracking, ratings |
 | auto_tagger.py | Automatic tag generation and category classification |
+| chain_listener.py | On-chain event monitoring, block scanning, event matching |
 | contract_brain.py | CAG context search across public SDK definitions |
 | config_defaults.py | Platform configuration seeding |
 | crypto_utils.py | Keccak-256, function selectors, topic hashes |
+| dapp_factory.py | Template-based DApp assembly, build pipeline, ZIP output |
 | device_telemetry.py | Telemetry ingestion and validation |
 | document_compare.py | Document similarity scoring and diff |
 | document_exporter.py | Markdown/HTML export |
@@ -956,15 +1126,19 @@ Of 100+ endpoints, only 3 touch the inference server. All others operate at full
 | email_bridge.py | Email alias management and routing |
 | embedding.py | Sentence-transformer integration (384-dim) |
 | event_bus.py | In-process pub/sub with wildcard patterns |
+| fts.py | FTS5 full-text search indexing and query |
 | inference.py | BitNet HTTP client (streaming + non-streaming) |
 | knowledge_refresh.py | Event-driven knowledge cache invalidation |
 | mcp_gateway.py | Unified tool dispatch across all protocols |
 | mcp_proxy.py | HTTP proxy for external MCP servers |
 | messaging.py | DM, group, threading, read state, permissions |
+| messenger_bridge.py | Cross-platform message relay and bridging |
 | monitor.py | System health checks (inference, DB, SMTP) |
 | p2p.py | Peer discovery, presence, gossip, relay |
 | rag.py | Document chunking, hybrid search, context building |
 | registry_service.py | Project CRUD, ABI/SDK/logic management, stars/forks |
+| scheduler.py | Cron-like task scheduler with health monitoring |
+| script_runner.py | Safe script execution with category-based access control |
 | sdk_generator.py | SDK JSON generation from parsed ABIs |
 | shamir.py | Shamir's Secret Sharing (split/reconstruct) |
 | smtp_bridge.py | aiosmtpd SMTP server for email-to-DM routing |
@@ -978,6 +1152,33 @@ Of 100+ endpoints, only 3 touch the inference server. All others operate at full
 
 ---
 
-*This document is an internal technical reference for REFINET Cloud v2.0.*
+## Appendix D — Operational Scripts
+
+23 scripts in `scripts/`:
+
+| Category | Script | Purpose |
+|---|---|---|
+| analysis/ | knowledge_coverage.py | Audit knowledge base coverage across categories |
+| analysis/ | platform_stats.py | Platform-wide statistics (users, projects, devices) |
+| analysis/ | registry_report.py | Registry project analytics and trends |
+| analysis/ | usage_report.py | API usage aggregation and reporting |
+| maintenance/ | backup_db.py | Database backup to compressed archive |
+| maintenance/ | cleanup_orphans.py | Remove orphaned records across tables |
+| maintenance/ | prune_telemetry.py | Trim old telemetry data beyond retention window |
+| maintenance/ | rebuild_fts_index.py | Rebuild FTS5 full-text search indexes |
+| maintenance/ | reset_api_counters.py | Reset daily API key usage counters |
+| maintenance/ | rotate_secrets.py | Rotate encryption keys and secrets |
+| ops/ | db_stats.py | Database size, table counts, WAL statistics |
+| ops/ | health_report.py | Comprehensive health check report |
+| chain/ | fetch_abi.py | Fetch contract ABI from block explorer |
+| chain/ | monitor_address.py | Monitor address for transactions |
+| chain/ | read_contract.py | Read contract state via RPC |
+| dapp/ | build_dapp.py | CLI DApp assembly from template |
+| dapp/ | list_templates.py | List available DApp templates |
+| — | backfill_sdk_knowledge.py | Backfill SDK definitions into knowledge base |
+
+---
+
+*This document is an internal technical reference for REFINET Cloud v3.0.*
 *Classification: Internal / Academic.*
 *Last updated: March 2026.*

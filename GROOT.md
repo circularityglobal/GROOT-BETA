@@ -24,13 +24,19 @@ See the full specification in `docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md`.
 
 **Platform Subsystems:**
 - AI Inference — OpenAI-compatible API with RAG + CAG context injection
+- Agent Engine — Autonomous multi-agent platform with SOUL identity, 4-tier memory, 6-phase cognitive loop, tool access, and delegation
 - Smart Contract Registry — GitHub-style project management with ABI parsing and SDK generation
 - GROOT Brain — Per-user contract repository with source code privacy
+- DApp Factory — Template-based DApp assembly from registry contracts (token-dashboard, nft-gallery, staking-ui, dao-voter, multi-send)
+- App Store — Publish and discover DApps, agents, tools, and templates
+- Chain Listener — On-chain event monitoring with webhook-triggered backend actions
 - Wallet Identity — Multi-chain identity with ENS resolution and pseudo-IPv6 addressing
-- Messaging — Wallet-to-wallet DMs, groups, email bridge (SMTP), typing indicators
+- Messaging — Wallet-to-wallet DMs, groups, email bridge (SMTP), messenger bridge, typing indicators
 - P2P Network — Presence tracking, gossip-based peer discovery, relay infrastructure
-- Knowledge Base — Multi-format document ingestion, auto-tagging, comparison, timeline extraction
+- Knowledge Base — Multi-format document ingestion, auto-tagging, comparison, timeline extraction, FTS5 full-text indexing
 - Device & Agent Connectivity — IoT/PLC/DLT registration, telemetry, remote config
+- Task Scheduler — Health monitoring, cleanup, memory expiry, configurable scheduled tasks
+- Script Runner — Safe script execution with category-based access control (ops, maintenance, analysis, chain, dapp)
 - Admin Panel — Role management, secrets vault, audit log, system config, MCP registry
 
 **Cardinal Rules:**
@@ -39,10 +45,13 @@ See the full specification in `docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md`.
 3. Audit log is append-only — no update or delete routes exist
 4. Custodial wallet private keys are NEVER stored — only encrypted Shamir shares
 5. All 6 protocols use unified authentication middleware
+6. Agents inherit owner permissions — no privilege escalation
+7. Chain watchers may detect events but NEVER initiate state-changing transactions autonomously
 
 **Scale:**
-- 17 route files, 100+ API endpoints
-- 40+ database tables (public + internal)
-- 33 service modules, 10 auth modules
-- 9 schema files, 6 middleware modules
-- 8 test files (52+ tests passing)
+- 22 route files, 210+ API endpoints
+- 50+ database tables (public + internal)
+- 42 service modules, 10 auth modules
+- 10 migration files, 7 middleware modules
+- 10 test files, 23 operational scripts
+- 17 frontend pages, 7 documentation files
