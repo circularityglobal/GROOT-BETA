@@ -1,0 +1,24 @@
+# REFINET Cloud — Production Configuration Overrides
+# Merged on top of default.yaml when REFINET_ENV=production
+
+groot:
+  temperature: 0.3
+  stream: true
+
+heartbeat:
+  interval_seconds: 60
+
+memory:
+  episodic_ttl_days: 90
+
+orchestration:
+  max_iterations: 3
+  timeout_seconds: 30
+
+safety:
+  max_tokens_per_request: 512
+  max_requests_per_minute: 30
+
+logging:
+  jsonl_enabled: true
+  level: WARNING

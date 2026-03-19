@@ -614,6 +614,21 @@ def toggle_function(
     # Regenerate SDK with updated enabled set
     _regenerate_sdk(db, contract, username)
 
+    # Emit event so the SDK→Knowledge bridge updates GROOT's context immediately
+    import asyncio
+    from api.services.event_bus import EventBus
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(EventBus.get().publish("registry.sdk.function_toggled", {
+            "contract_id": contract.id,
+            "function_id": fn.id,
+            "function_name": fn.function_name,
+            "is_sdk_enabled": body.is_sdk_enabled,
+            "slug": slug,
+        }))
+    except RuntimeError:
+        pass  # No event loop — scheduler worker will catch the drift
+
     action = "enabled" if body.is_sdk_enabled else "disabled"
     return {
         "message": f"Function '{fn.function_name}' {action} in SDK",

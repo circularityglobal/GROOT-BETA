@@ -17,6 +17,7 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     top_p: float = Field(default=1.0, ge=0.0, le=1.0)
     notebook_doc_ids: Optional[list[str]] = None  # Scope RAG to specific documents
+    grounding: bool = False  # Enable Google Search grounding (Gemini only)
 
 
 class SourceReference(BaseModel):
@@ -50,6 +51,7 @@ class ChatCompletionResponse(BaseModel):
     choices: list[ChatCompletionChoice]
     usage: UsageInfo
     sources: Optional[list[SourceReference]] = None  # RAG sources used in response
+    provider: Optional[str] = None  # Which provider served this response
 
 
 class ModelInfo(BaseModel):
@@ -57,6 +59,9 @@ class ModelInfo(BaseModel):
     object: str = "model"
     created: int
     owned_by: str = "refinet"
+    provider: str = "refinet"
+    context_window: int = 4096
+    is_free: bool = True
 
 
 class ModelListResponse(BaseModel):

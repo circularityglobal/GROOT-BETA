@@ -57,6 +57,27 @@ class ApiKey(PublicBase):
     expires_at = Column(DateTime, nullable=True)
 
 
+class UserProviderKey(PublicBase):
+    """User-owned API keys for external AI providers (OpenAI, Anthropic, etc.)."""
+    __tablename__ = "user_provider_keys"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    provider_type = Column(String, nullable=False)  # openai | anthropic | gemini | ollama | lmstudio | openrouter | replicate | stability | runway | custom
+    display_name = Column(String, nullable=False)  # user-friendly label e.g. "My OpenAI Key"
+    encrypted_key = Column(String, nullable=False)  # AES-256-GCM encrypted API key
+    key_preview = Column(String, nullable=True)  # masked preview e.g. "sk-...xY9z" (stored at save time)
+    base_url = Column(String, nullable=True)  # custom endpoint URL (for Ollama, LM Studio, custom)
+    is_active = Column(Boolean, default=True)
+    last_used_at = Column(DateTime, nullable=True)
+    usage_count = Column(Integer, default=0)
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider_type", "display_name", name="uq_user_provider_name"),
+    )
+
+
 class DeviceRegistration(PublicBase):
     __tablename__ = "device_registrations"
 
@@ -123,6 +144,7 @@ class UsageRecord(PublicBase):
     api_key_id = Column(String, ForeignKey("api_keys.id"), nullable=True)
     device_id = Column(String, ForeignKey("device_registrations.id"), nullable=True)
     model = Column(String, nullable=True)
+    provider = Column(String, nullable=True)  # bitnet | gemini | ollama | lmstudio | openrouter
     prompt_tokens = Column(Integer, default=0)
     completion_tokens = Column(Integer, default=0)
     latency_ms = Column(Integer, default=0)
@@ -383,7 +405,7 @@ class AppListing(PublicBase):
     slug = Column(String, unique=True, nullable=False, index=True)   # url-safe identifier
     description = Column(Text, nullable=True)
     readme = Column(Text, nullable=True)                             # Markdown content
-    category = Column(String, nullable=False, index=True)            # dapp | agent | tool | template
+    category = Column(String, nullable=False, index=True)            # dapp | agent | tool | template | dataset | api-service | digital-asset
     chain = Column(String, nullable=True, index=True)                # ethereum | base | arbitrum | polygon | multi-chain
     version = Column(String, default="1.0.0")
     icon_url = Column(String, nullable=True)
@@ -393,8 +415,17 @@ class AppListing(PublicBase):
     registry_project_id = Column(String, nullable=True)              # Link to registry_projects.id
     dapp_build_id = Column(String, nullable=True)                    # Link to dapp_builds.id
     agent_id = Column(String, nullable=True)                         # Link to agent_registrations.id
+    # Pricing & Delivery
+    price_type = Column(String, default="free")                      # free | one-time | subscription
+    price_amount = Column(Float, default=0.0)                        # Price in USD (0 = free)
+    price_token = Column(String, nullable=True)                      # Optional: token symbol for crypto payment (ETH, USDC, etc.)
+    price_token_amount = Column(Float, nullable=True)                # Price in token units
+    license_type = Column(String, default="open")                    # open | single-use | multi-use | enterprise
+    download_url = Column(String, nullable=True)                     # Direct download link (DApp zip, dataset file, etc.)
+    external_url = Column(String, nullable=True)                     # External link (live demo, API docs, etc.)
     # Metrics
     install_count = Column(Integer, default=0)
+    download_count = Column(Integer, default=0)
     rating_avg = Column(Float, default=0.0)
     rating_count = Column(Integer, default=0)
     # Status
@@ -402,6 +433,7 @@ class AppListing(PublicBase):
     is_verified = Column(Boolean, default=False)                     # Admin-verified quality signal
     is_featured = Column(Boolean, default=False, index=True)         # Curated featured listing
     is_active = Column(Boolean, default=True)
+    listed_by_admin = Column(Boolean, default=False)                 # True if admin-listed product
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now())
 
@@ -434,3 +466,67 @@ class AppInstall(PublicBase):
     user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     installed_at = Column(DateTime, server_default=func.now())
     uninstalled_at = Column(DateTime, nullable=True)                 # null = still installed
+
+
+# ── App Store Submissions (Apple/Google-style review pipeline) ────
+
+class AppSubmission(PublicBase):
+    """
+    Submission request for App Store review.
+    Lifecycle: draft → submitted → automated_review → in_review → approved/rejected/changes_requested → published
+    """
+    __tablename__ = "app_submissions"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    submitter_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    app_listing_id = Column(String, ForeignKey("app_listings.id"), nullable=True)  # null for new apps
+    # Metadata (snapshot at submission time)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    readme = Column(Text, nullable=True)
+    category = Column(String, nullable=False)                        # dapp | agent | tool | template | dataset | api-service | digital-asset
+    chain = Column(String, nullable=True)
+    version = Column(String, default="1.0.0")
+    icon_url = Column(String, nullable=True)
+    screenshots = Column(Text, nullable=True)                        # JSON array
+    tags = Column(Text, nullable=True)                               # JSON array
+    # Pricing
+    price_type = Column(String, default="free")
+    price_amount = Column(Float, default=0.0)
+    price_token = Column(String, nullable=True)
+    license_type = Column(String, default="open")
+    external_url = Column(String, nullable=True)
+    # Submission type
+    submission_type = Column(String, default="new")                  # new | update | resubmission
+    # Artifact (uploaded code/binary)
+    artifact_filename = Column(String, nullable=True)                # Original filename
+    artifact_path = Column(String, nullable=True)                    # Server path to stored artifact
+    artifact_hash = Column(String, nullable=True)                    # SHA-256 for integrity
+    artifact_size_bytes = Column(Integer, nullable=True)
+    # Review state machine
+    status = Column(String, default="draft", index=True)             # draft | submitted | automated_review | in_review | changes_requested | approved | rejected | published
+    reviewer_id = Column(String, nullable=True)                      # Admin who claimed it
+    review_started_at = Column(DateTime, nullable=True)
+    review_completed_at = Column(DateTime, nullable=True)
+    rejection_reason = Column(Text, nullable=True)
+    # Automated scan results
+    automated_scan_status = Column(String, nullable=True)            # pending | passed | failed | skipped
+    automated_scan_result = Column(Text, nullable=True)              # JSON: findings from static analysis
+    # Sandbox
+    sandbox_id = Column(String, nullable=True)                       # Link to internal SandboxEnvironment
+    # Timestamps
+    submitted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now())
+
+
+class SubmissionNote(PublicBase):
+    """Review notes — communication between admin reviewer and developer."""
+    __tablename__ = "submission_notes"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    submission_id = Column(String, ForeignKey("app_submissions.id", ondelete="CASCADE"), nullable=False, index=True)
+    author_id = Column(String, ForeignKey("users.id"), nullable=False)
+    note_type = Column(String, nullable=False)                       # comment | request_changes | approval | rejection | system
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())

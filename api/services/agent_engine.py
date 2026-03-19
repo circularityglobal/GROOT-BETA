@@ -232,6 +232,22 @@ class AgentCognitiveLoop:
                 "success": success,
             })
 
+            # Route output to configured targets (agent chaining, webhooks, etc.)
+            try:
+                from api.services.output_router import route_output, get_output_targets
+                output_targets = get_output_targets(self.db, self.agent_id)
+                if output_targets:
+                    await route_output(
+                        db=self.db,
+                        task_id=task.id,
+                        agent_id=self.agent_id,
+                        user_id=self.user_id,
+                        result={"output": output, "success": success},
+                        targets=output_targets,
+                    )
+            except Exception as e:
+                logger.warning(f"Output routing error (non-fatal): {e}")
+
             return TaskResult(
                 success=success,
                 output=output,
@@ -267,19 +283,17 @@ class AgentCognitiveLoop:
 
     async def _perceive(self, task: AgentTask) -> dict:
         """Phase 1: Parse task, recall memories, build situation awareness."""
-        # Recall relevant memories
+        # Recall relevant memories (passed to context assembly as Layer 2)
         memory_context = build_memory_context(
             self.db, self.agent_id, task.description, task_id=task.id,
         )
 
-        # Build system prompt with SOUL + RAG
-        system_prompt, sources = build_agent_system_prompt(
-            self.db, self.agent_id, task.description, user_id=self.user_id,
+        # Build system prompt with full 7-layer context injection stack
+        system_prompt, sources, token_report = build_agent_system_prompt(
+            self.db, self.agent_id, task.description,
+            user_id=self.user_id,
+            memory_context=memory_context,
         )
-
-        # Add memory context
-        if memory_context:
-            system_prompt += f"\n\n## Your Memories\n{memory_context}"
 
         # Ask BitNet to analyze the situation
         perception_prompt = f"""Analyze this task and provide a situation assessment.

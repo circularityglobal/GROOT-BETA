@@ -1,6 +1,7 @@
 """
 REFINET Cloud — Inference Routes
-OpenAI-compatible API for BitNet inference.
+OpenAI-compatible API for multi-provider inference.
+Supports BitNet, Gemini, Ollama, LM Studio, OpenRouter.
 Supports both streaming (SSE) and non-streaming responses.
 Supports anonymous (unauthenticated) access with IP-based rate limiting.
 """
@@ -24,7 +25,9 @@ from api.schemas.inference import (
     ChatCompletionChoice, ChatMessage, UsageInfo,
     ModelListResponse, ModelInfo, SourceReference,
 )
-from api.services.inference import call_bitnet, stream_bitnet
+from api.services.gateway import ModelGateway
+from api.services.providers import ProviderRegistry, StreamResult
+from api.services.inference import estimate_prompt_tokens
 from api.services.rag import build_groot_system_prompt
 from api.config import get_settings
 
@@ -65,12 +68,9 @@ def _inject_rag_context(
     user_id: Optional[str] = None,
 ) -> tuple[list[dict], list[dict]]:
     """
-    Inject Groot's system prompt with RAG context before sending to BitNet.
+    Inject Groot's system prompt with RAG context before sending to any provider.
     Returns (enriched_messages, sources_list).
-    Uses the last user message as primary query. For multi-turn conversations,
-    blends recent context to improve retrieval relevance.
     """
-    # Find the last user message for RAG search
     user_query = ""
     for msg in reversed(messages):
         if msg["role"] == "user":
@@ -90,12 +90,10 @@ def _inject_rag_context(
             blended = f"{blended} {prev_snippet}"
         user_query = blended
 
-    # Build system prompt with RAG context from knowledge base + contracts
     system_prompt, sources = build_groot_system_prompt(
         db, user_query, doc_ids=notebook_doc_ids, user_id=user_id,
     )
 
-    # Check if there's already a system message
     if messages and messages[0]["role"] == "system":
         messages[0]["content"] = system_prompt + "\n\n" + messages[0]["content"]
     else:
@@ -115,18 +113,15 @@ def _authenticate_inference(
     """
     auth_header = request.headers.get("Authorization", "")
 
-    # Try Bearer token (JWT or API key)
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
 
-        # Check if it's an API key (starts with rf_)
         if token.startswith("rf_"):
             api_key = validate_api_key(db, token)
             if not api_key:
                 raise HTTPException(status_code=401, detail="Invalid or rate-limited API key")
             return api_key.user_id, api_key.id, False
 
-        # JWT token
         try:
             payload = decode_access_token(token)
         except Exception:
@@ -137,7 +132,6 @@ def _authenticate_inference(
 
         return payload["sub"], None, False
 
-    # No auth header — anonymous access
     client_ip = request.client.host if request.client else "unknown"
     if not _check_anonymous_rate(client_ip):
         raise HTTPException(
@@ -147,18 +141,85 @@ def _authenticate_inference(
     return None, None, True
 
 
+# ── BYOK: Resolve user-owned provider keys ────────────────────────
+
+def _resolve_user_provider(db: Session, user_id: Optional[str], model: str):
+    """
+    Check if the user has their own API key for the provider that handles this model.
+    Returns an ephemeral BaseProvider instance or None.
+
+    SECURITY: Only returns a provider if the user has completed all 3 auth layers.
+    This prevents users with SIWE-only auth from using BYOK keys.
+    """
+    if not user_id:
+        return None
+
+    # Map model prefix to provider type
+    provider_type = None
+    if model.startswith("gpt-") or model.startswith("dall-e") or model.startswith("whisper") or model.startswith("tts-"):
+        provider_type = "openai"
+    elif model.startswith("claude-"):
+        provider_type = "anthropic"
+    elif model.startswith("gemini-"):
+        provider_type = "gemini"
+    elif "/" in model:  # e.g., "meta-llama/llama-3.1-8b" → openrouter
+        provider_type = "openrouter"
+    elif model.startswith("mistral-") or model.startswith("codestral"):
+        provider_type = "mistral"
+    elif model.startswith("sonar"):
+        provider_type = "perplexity"
+    elif model.startswith("llama-") or model.startswith("mixtral"):
+        provider_type = "groq"
+
+    if not provider_type:
+        return None
+
+    try:
+        # SECURITY: Verify user has completed all 3 auth layers before decrypting keys
+        from api.models.public import User
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return None
+        if not (user.auth_layer_1_complete and user.auth_layer_2_complete and user.auth_layer_3_complete):
+            return None
+
+        from api.services.provider_keys import get_decrypted_key
+        result = get_decrypted_key(db, user_id, provider_type)
+        if result:
+            api_key, base_url = result
+            return ModelGateway.create_user_provider(provider_type, api_key, base_url)
+    except Exception:
+        pass
+
+    return None
+
+
 # ── Models endpoint (no auth required) ─────────────────────────────
 
 @router.get("/v1/models", response_model=ModelListResponse)
 def list_models():
-    return ModelListResponse(
-        data=[
-            ModelInfo(
-                id="bitnet-b1.58-2b",
-                created=int(time.time()),
-            )
-        ]
-    )
+    """Return all models from all registered providers."""
+    registry = ProviderRegistry.get()
+    entries = registry.list_all_models()
+
+    now = int(time.time())
+    models = [
+        ModelInfo(
+            id=entry.model_id,
+            created=now,
+            owned_by=entry.owned_by,
+            provider=entry.provider_type.value,
+            context_window=entry.context_window,
+            is_free=entry.is_free,
+        )
+        for entry in entries
+    ]
+
+    # Always include at least the default model
+    if not models:
+        models = [ModelInfo(id="bitnet-b1.58-2b", created=now)]
+
+    return ModelListResponse(data=models)
 
 
 # ── Chat completions ───────────────────────────────────────────────
@@ -186,24 +247,39 @@ async def chat_completions(
         user_id=user_id,
     )
 
+    # ── BYOK: Check if user has their own key for this model's provider ──
+    user_provider = _resolve_user_provider(db, user_id, req.model)
+
     if req.stream:
         return StreamingResponse(
-            _stream_response(req, enriched_messages, user_id, api_key_id, db, start_time, rag_sources),
+            _stream_response(req, enriched_messages, user_id, api_key_id, db, start_time, rag_sources, user_provider),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",  # Nginx: don't buffer SSE
+                "X-Accel-Buffering": "no",
             },
         )
 
-    # Non-streaming response
-    result = await call_bitnet(
-        messages=enriched_messages,
-        temperature=req.temperature,
-        max_tokens=req.max_tokens,
-        top_p=req.top_p,
-    )
+    # Non-streaming response — use user provider if available, else gateway
+    if user_provider:
+        kwargs: dict = dict(
+            messages=enriched_messages, model=req.model,
+            temperature=req.temperature, max_tokens=req.max_tokens, top_p=req.top_p,
+        )
+        if req.grounding:
+            kwargs["grounding"] = True
+        result = await user_provider.complete(**kwargs)
+    else:
+        gateway = ModelGateway.get()
+        result = await gateway.complete(
+            messages=enriched_messages,
+            model=req.model,
+            temperature=req.temperature,
+            max_tokens=req.max_tokens,
+            top_p=req.top_p,
+            grounding=req.grounding,
+        )
 
     latency_ms = int((time.time() - start_time) * 1000)
 
@@ -214,13 +290,14 @@ async def chat_completions(
             user_id=user_id,
             api_key_id=api_key_id,
             model=req.model,
-            prompt_tokens=result.get("prompt_tokens", 0),
-            completion_tokens=result.get("completion_tokens", 0),
+            provider=result.provider,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
             latency_ms=latency_ms,
             endpoint="/v1/chat/completions",
         )
         db.add(usage_record)
-        db.flush()  # Ensure usage record is persisted before response
+        db.flush()
 
     # Build source references
     source_refs = [
@@ -244,32 +321,50 @@ async def chat_completions(
             ChatCompletionChoice(
                 message=ChatMessage(
                     role="assistant",
-                    content=result["content"],
+                    content=result.content,
                 ),
+                finish_reason=result.finish_reason,
             )
         ],
         usage=UsageInfo(
-            prompt_tokens=result.get("prompt_tokens", 0),
-            completion_tokens=result.get("completion_tokens", 0),
-            total_tokens=result.get("prompt_tokens", 0) + result.get("completion_tokens", 0),
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            total_tokens=result.prompt_tokens + result.completion_tokens,
         ),
         sources=source_refs,
+        provider=result.provider,
     )
     return response
 
 
-async def _stream_response(req, enriched_messages, user_id, api_key_id, db, start_time, rag_sources=None):
-    """Generate SSE stream from BitNet inference with RAG context."""
+async def _stream_response(req, enriched_messages, user_id, api_key_id, db, start_time, rag_sources=None, user_provider=None):
+    """Generate SSE stream from any provider via ModelGateway or user's own provider."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-    total_tokens = 0
 
-    async for chunk in stream_bitnet(
-        messages=enriched_messages,
-        temperature=req.temperature,
-        max_tokens=req.max_tokens,
-        top_p=req.top_p,
-    ):
-        total_tokens += 1
+    stream_result = StreamResult()
+
+    if user_provider:
+        kwargs: dict = dict(
+            messages=enriched_messages, model=req.model,
+            temperature=req.temperature, max_tokens=req.max_tokens,
+            top_p=req.top_p, result=stream_result,
+        )
+        if req.grounding:
+            kwargs["grounding"] = True
+        stream_gen = user_provider.stream(**kwargs)
+    else:
+        gateway = ModelGateway.get()
+        stream_gen = gateway.stream(
+            messages=enriched_messages,
+            model=req.model,
+            temperature=req.temperature,
+            max_tokens=req.max_tokens,
+            top_p=req.top_p,
+            grounding=req.grounding,
+            result=stream_result,
+        )
+
+    async for chunk in stream_gen:
         data = {
             "id": completion_id,
             "object": "chat.completion.chunk",
@@ -283,7 +378,11 @@ async def _stream_response(req, enriched_messages, user_id, api_key_id, db, star
         }
         yield f"data: {json.dumps(data)}\n\n"
 
-    # Final chunk with finish_reason
+    # If server didn't report prompt_tokens, estimate from the enriched messages
+    if stream_result.prompt_tokens == 0:
+        stream_result.prompt_tokens = estimate_prompt_tokens(enriched_messages)
+
+    # Final chunk with finish_reason and usage (OpenAI-compatible)
     final = {
         "id": completion_id,
         "object": "chat.completion.chunk",
@@ -294,6 +393,11 @@ async def _stream_response(req, enriched_messages, user_id, api_key_id, db, star
             "delta": {},
             "finish_reason": "stop",
         }],
+        "usage": {
+            "prompt_tokens": stream_result.prompt_tokens,
+            "completion_tokens": stream_result.completion_tokens,
+            "total_tokens": stream_result.prompt_tokens + stream_result.completion_tokens,
+        },
     }
     yield f"data: {json.dumps(final)}\n\n"
 
@@ -317,7 +421,7 @@ async def _stream_response(req, enriched_messages, user_id, api_key_id, db, star
 
     yield "data: [DONE]\n\n"
 
-    # Record usage after stream completes (skip for anonymous)
+    # Record accurate usage after stream completes (skip for anonymous)
     if user_id:
         latency_ms = int((time.time() - start_time) * 1000)
         usage_record = UsageRecord(
@@ -325,8 +429,9 @@ async def _stream_response(req, enriched_messages, user_id, api_key_id, db, star
             user_id=user_id,
             api_key_id=api_key_id,
             model=req.model,
-            prompt_tokens=0,
-            completion_tokens=total_tokens,
+            provider=stream_result.provider or "unknown",
+            prompt_tokens=stream_result.prompt_tokens,
+            completion_tokens=stream_result.completion_tokens,
             latency_ms=latency_ms,
             endpoint="/v1/chat/completions",
         )

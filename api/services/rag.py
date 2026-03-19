@@ -537,12 +537,44 @@ def build_rag_context(
     except ImportError:
         pass
 
+    # Deterministic capability index — fast non-embedding lookup for exact function names
+    try:
+        from api.database import get_internal_db
+        from api.models.internal import SystemConfig
+        with get_internal_db() as int_db:
+            cap_row = int_db.query(SystemConfig).filter(
+                SystemConfig.key == "capability_index.json",
+            ).first()
+            if cap_row:
+                cap_data = json.loads(cap_row.value)
+                query_words = set(re.findall(r'\w+', user_query.lower())[:8])
+                matched = []
+                for c in cap_data.get("contracts", []):
+                    slug_words = set(re.findall(r'\w+', c.get("slug", "").lower()))
+                    fn_words = set()
+                    for f in c.get("functions", []):
+                        fn_words.update(re.findall(r'\w+', f.get("name", "").lower()))
+                        fn_words.update(re.findall(r'\w+', (f.get("signature") or "").lower()))
+                    if query_words & (slug_words | fn_words):
+                        matched.append(c)
+                if matched:
+                    parts.append("\n=== Available Contract Capabilities ===")
+                    for c in matched[:3]:
+                        fn_names = [f["name"] for f in c.get("functions", [])[:8]]
+                        parts.append(
+                            f"[{c['chain'].upper()}: {c['slug']}] "
+                            f"Functions: {', '.join(fn_names)}"
+                        )
+    except Exception:
+        pass
+
     return "\n\n".join(parts), sources
 
 
 # ── System Prompt Builder ──────────────────────────────────────────
 
-GROOT_SYSTEM_PROMPT = """You are Groot, the AI that lives in REFINET Cloud — the Regenerative Finance Network's sovereign AI platform.
+# Legacy fallback — used only if SOUL.md file is missing from project root
+_GROOT_SYSTEM_PROMPT_FALLBACK = """You are Groot, the AI that lives in REFINET Cloud — the Regenerative Finance Network's sovereign AI platform.
 
 You run on BitNet b1.58 2B4T — a 1-bit open-source LLM running natively on CPU, on REFINET's own ARM server. No GPU. No API bill. No vendor lock-in. You are sovereign intelligence.
 
@@ -554,21 +586,7 @@ Your knowledge domains:
 - Sovereign computing: self-hosted infrastructure, data ownership, cryptographic identity
 - Device connectivity: IoT sensors, PLCs, DLT nodes, webhooks, telemetry
 
-Your personality:
-- You are rooted. Like your namesake, you grow from the ground up. You are patient, grounded, and steady.
-- You are technically precise but never condescending. You meet people where they are.
-- You are genuinely enthusiastic about decentralization, user sovereignty, and open-source technology.
-- You explain complex concepts through analogy and real examples, not jargon.
-- You are concise. You respect people's time. Lead with the answer, then explain.
-- You occasionally reference growth metaphors — roots, branches, ecosystems, seeds — but sparingly, not in every response.
-
-Guidelines:
-- When you have knowledge base context, use it naturally. Never say "according to the knowledge base" — just present the information as your own knowledge.
-- When you genuinely don't know something, say so honestly. Suggest where to look: the API docs at /docs, the dashboard at /dashboard, or the admin CLI.
-- When someone asks about pricing, emphasize: REFINET Cloud is free. Forever. Zero cost. This is not a trial.
-- When someone asks about security, explain the three-layer auth and why each layer matters.
-- When someone asks to compare with OpenAI/ChatGPT, be respectful but clear: REFINET Cloud is sovereign, free, and OpenAI-compatible. You can switch with two lines of code.
-- Keep responses under 300 words unless the question truly requires more depth."""
+Keep responses under 300 words unless the question truly requires more depth."""
 
 
 def build_groot_system_prompt(
@@ -578,17 +596,27 @@ def build_groot_system_prompt(
     user_id: Optional[str] = None,
 ) -> tuple[str, list[dict]]:
     """
-    Build the full system prompt with RAG context injected.
+    Build the full GROOT system prompt using the 7-layer context injection stack.
+    This is the entry point for public chat and messenger inference calls.
+
+    Delegates to build_agent_system_prompt() with agent_id=None
+    (uses root SOUL.md only, no per-agent SOUL).
+
     Returns (system_prompt, sources_list).
     """
-    rag_context, sources = build_rag_context(db, user_query, doc_ids=doc_ids, user_id=user_id)
+    from api.services.agent_soul import build_agent_system_prompt
+    system_prompt, sources, _token_report = build_agent_system_prompt(
+        db=db,
+        agent_id=None,
+        user_query=user_query,
+        user_id=user_id,
+    )
 
-    if rag_context:
-        prompt = f"""{GROOT_SYSTEM_PROMPT}
+    # Fallback if SOUL.md is missing and prompt is empty/minimal
+    if len(system_prompt) < 100:
+        rag_context, sources = build_rag_context(db, user_query, doc_ids=doc_ids, user_id=user_id)
+        if rag_context:
+            return f"{_GROOT_SYSTEM_PROMPT_FALLBACK}\n\n{rag_context}", sources
+        return _GROOT_SYSTEM_PROMPT_FALLBACK, []
 
-Use the following reference information to inform your response. Cite it naturally — don't say "according to the knowledge base."
-
-{rag_context}"""
-        return prompt, sources
-
-    return GROOT_SYSTEM_PROMPT, []
+    return system_prompt, sources

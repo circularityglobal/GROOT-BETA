@@ -8,6 +8,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
+    container_name: refinet-api
     ports:
       - "8000:8000"
       - "50051:50051"  # gRPC
@@ -20,31 +21,66 @@ services:
       - INTERNAL_DB_URL=sqlite:////opt/refinet/data/internal.db
       - GRPC_PORT=50051
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      test: ["CMD", "python3", "-c", "import urllib.request,json; r=urllib.request.urlopen('http://localhost:8000/health',timeout=5); d=json.loads(r.read()); exit(0 if d.get('status')=='ok' else 1)"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 15s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile.dev
+    container_name: refinet-frontend
     ports:
       - "4000:4000"
     volumes:
       - ./frontend:/app
       - /app/node_modules
+      - /app/.next
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - PORT=4000
+      - HOSTNAME=0.0.0.0
     command: npm run dev
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
     healthcheck:
-      test: ["CMD", "node", "-e", "const http = require('http'); http.get('http://localhost:4000', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "const http=require('http'); http.get('http://localhost:4000',r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>process.exit(r.statusCode<400?0:1))}).on('error',()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 20s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # ── Product Subdomains ──────────────────────────────────────────
   # Uncomment and configure when repos are integrated.
@@ -60,6 +96,9 @@ services:
   #     - /app/node_modules
   #   environment:
   #     - NEXT_PUBLIC_API_URL=http://localhost:8000
+  #   depends_on:
+  #     api:
+  #       condition: service_healthy
   #   command: npm run dev
   #
   # REFINET Browser (browser.refinet.io)
@@ -73,4 +112,7 @@ services:
   #     - /app/node_modules
   #   environment:
   #     - NEXT_PUBLIC_API_URL=http://localhost:8000
+  #   depends_on:
+  #     api:
+  #       condition: service_healthy
   #   command: npm run dev

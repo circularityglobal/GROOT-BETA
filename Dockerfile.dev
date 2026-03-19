@@ -1,0 +1,30 @@
+# REFINET Cloud — API Development Dockerfile
+# For local development with docker-compose. NOT for production.
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System deps for grpcio, cryptography, and sqlite
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source (volumes override in dev, but needed for initial build)
+COPY api/ ./api/
+
+# Data directory for SQLite databases
+RUN mkdir -p /opt/refinet/data
+
+# Health check binary for Docker HEALTHCHECK
+RUN apt-get update && apt-get install -y --no-install-recommends wget && rm -rf /var/lib/apt/lists/*
+
+EXPOSE 8000 50051
+
+# Default command (overridden by docker-compose)
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

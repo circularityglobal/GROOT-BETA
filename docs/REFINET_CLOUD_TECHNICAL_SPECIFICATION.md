@@ -1,6 +1,6 @@
 # REFINET Cloud: Architecture of a Zero-Cost Sovereign AI Platform
 ## Technical Specification · Internal Reference Document
-### Version 2.0 · March 2026
+### Version 3.1 · March 2026
 
 ---
 
@@ -239,6 +239,103 @@ Logic: {logic_summary}
 
 The llama-server processes requests sequentially. Concurrent requests queue in the FastAPI application layer. Streaming delivery (SSE) provides perceived responsiveness even when requests are queued — users see the first token as soon as generation begins.
 
+### 3.5 — Universal Model Gateway (Multi-Provider)
+
+While BitNet is the sovereign default, the platform implements a **strategy-pattern provider gateway** that routes inference to any configured backend. This ensures resilience (fallback if BitNet is unavailable), user choice, and compatibility with external AI services.
+
+**Architecture:**
+
+```
+POST /v1/chat/completions { model: "gemini-2.0-flash" }
+    │
+    ├── RAG injection (identical across all providers)
+    │
+    ├── ModelGateway.resolve(model)
+    │   ├── Exact match in model_map
+    │   ├── Prefix heuristic: gemini-* → Gemini, gpt-* → OpenAI
+    │   ├── "auto" → first healthy provider in fallback chain
+    │   └── Unknown → OpenRouter catch-all (if registered)
+    │
+    ├── Provider.complete() / Provider.stream()
+    │   ├── BitNetProvider → llama-server /completion
+    │   ├── GeminiProvider → generativelanguage.googleapis.com (custom format conversion)
+    │   ├── OpenAICompatProvider → /v1/chat/completions (Ollama, LM Studio, OpenRouter, etc.)
+    │   └── Fallback: next healthy provider in chain
+    │
+    └── Normalized OpenAI-compatible SSE response
+```
+
+**Supported Providers (via .env or user BYOK keys):**
+
+| Provider | Type | Config Key | Protocol | Free Tier |
+|----------|------|-----------|----------|-----------|
+| BitNet b1.58-2B | Sovereign | `BITNET_HOST` | llama-server HTTP | Yes (always) |
+| Google Gemini | Cloud | `GEMINI_API_KEY` | Custom REST + SSE | Yes (15 RPM) |
+| Ollama | Local | `OLLAMA_HOST` | OpenAI-compatible | Yes |
+| LM Studio | Local | `LMSTUDIO_HOST` | OpenAI-compatible | Yes |
+| OpenRouter | Cloud | `OPENROUTER_API_KEY` | OpenAI-compatible | Partial |
+
+**Fallback Chain:** Configurable via `PROVIDER_FALLBACK_CHAIN` (default: `bitnet,gemini,ollama,lmstudio,openrouter`). If the resolved provider is unhealthy, the gateway walks the chain until a healthy provider is found.
+
+**Health Monitoring:** Scheduled task `provider_health_check` (60s interval) polls each provider. `provider_model_sync` (300s interval) refreshes dynamic model lists from Ollama/LM Studio.
+
+**Implementation Files:**
+
+| File | Purpose |
+|------|---------|
+| `api/services/providers/base.py` | `BaseProvider` ABC — strategy interface |
+| `api/services/providers/registry.py` | `ProviderRegistry` — model routing + fallback |
+| `api/services/providers/bitnet.py` | BitNet/llama-server provider |
+| `api/services/providers/gemini.py` | Google Gemini with message format conversion, rate limiting, safety, grounding |
+| `api/services/providers/openai_compat.py` | Shared base for Ollama, LM Studio, OpenRouter |
+| `api/services/gateway.py` | `ModelGateway` singleton — sole inference entry point |
+
+### 3.6 — BYOK (Bring Your Own Key)
+
+Users can connect their own API keys for external AI providers. This enables access to models not available at the platform level (e.g., GPT-4o, Claude Opus) using the user's own billing relationship.
+
+**Security Model:** BYOK key management requires **all three authentication layers** to be complete:
+
+| Layer | Requirement | Purpose |
+|-------|------------|---------|
+| Layer 3 (SIWE) | Wallet signature | Cryptographic identity |
+| Layer 1 (Password) | Email + Argon2id hash | Account recovery |
+| Layer 2 (TOTP) | 2FA authenticator code | Compromise protection |
+
+If any layer is incomplete, the API returns HTTP 403 with a structured response identifying which layers are missing.
+
+**Key Storage:** User provider keys are encrypted with AES-256-GCM using the platform's `INTERNAL_DB_ENCRYPTION_KEY`. Key previews (first 4 + last 4 characters) are computed at save time and stored separately — the encrypted key is never decrypted for display operations.
+
+**Supported Providers (13):** OpenAI, Anthropic, Google Gemini, OpenRouter, Replicate, Stability AI, Together AI, Groq, Mistral AI, Perplexity, Ollama (local), LM Studio (local), Custom OpenAI-compatible.
+
+**BYOK Inference Flow:**
+
+```
+User sends: model: "gpt-4o"
+    │
+    ├── _resolve_user_provider(db, user_id, "gpt-4o")
+    │   ├── Map "gpt-4o" → provider_type "openai"
+    │   ├── Verify user has all 3 auth layers complete
+    │   ├── Decrypt user's OpenAI key from UserProviderKey table
+    │   └── Create ephemeral OpenAICompatProvider(api_key=decrypted)
+    │
+    ├── Use ephemeral provider for this request only
+    │   (platform keys never touched)
+    │
+    └── Response includes provider: "openrouter" in usage tracking
+```
+
+**API Endpoints:**
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `GET` | `/provider-keys/catalog` | None | List 13 available providers |
+| `GET` | `/provider-keys/security-status` | JWT | Check if user has all 3 layers |
+| `GET` | `/provider-keys` | Full Auth | List user's saved keys (masked) |
+| `POST` | `/provider-keys` | Full Auth | Save/update provider key |
+| `DELETE` | `/provider-keys/{id}` | Full Auth | Delete provider key |
+| `POST` | `/provider-keys/{id}/test` | Full Auth | Test connection to provider |
+
 ---
 
 ## 4. Database Architecture
@@ -339,6 +436,41 @@ PRAGMA foreign_keys = ON;        -- Referential integrity enforced
 ```
 
 WAL mode is critical for this architecture because the inference pipeline (which can run for 10+ seconds per request) must not block concurrent webhook deliveries, telemetry ingestion, messaging, or authentication checks.
+
+### 4.3 — Four-Tier Data Classification
+
+Every table is classified into one of four access tiers. The `data_ttl` worker enforces retention policies automatically.
+
+| Tier | Description | Retention | Examples |
+|---|---|---|---|
+| **Private** | Never exposed via public API. Admin-managed. | Indefinite | `server_secrets`, `custodial_wallets`, `wallet_shares`, `admin_audit_log`, `role_assignments` |
+| **Short-term** | Auto-expires. High write volume, TTL-based pruning. | Minutes to days | `siwe_nonces` (10min), `refresh_tokens` (30d), `agent_memory_working` (1hr), `iot_telemetry` (30d), `health_check_logs` (30d), `wallet_sessions` inactive (30d) |
+| **Long-term** | Persistent but prunable. Configurable retention windows. | Days to months | `chain_events` (90d), `usage_records` (180d), `agent_memory_episodic` (30d), `script_executions` (90d), `users`, `agent_souls`, `contract_repos` |
+| **Public** | Discoverable by GROOT and MCP. Owner-controlled lifetime. | Indefinite (owner controls) | `contract_repos` (is_public=True), `sdk_definitions` (is_public=True), `knowledge_documents` (visibility=public), `app_listings` (published), `registry_projects` (visibility=public) |
+
+### 4.4 — GROOT's Three Brain Inputs
+
+GROOT's context is built from three data sources, each fed by deterministic I/O workers:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        GROOT INFERENCE                              │
+│  build_groot_system_prompt() → RAG context injection → BitNet      │
+├──────────────────┬──────────────────┬───────────────────────────────┤
+│  Brain 1: DLT    │  Brain 2: Tools  │  Brain 3: Managed Data       │
+│                  │                  │                               │
+│  chain_listener  │  agent_engine    │  knowledge_sync worker        │
+│  → ChainEvent    │  → MCP dispatch  │  → SDK↔Knowledge sync        │
+│  chain_event_    │  capability_     │  knowledge_gc worker          │
+│  indexer worker  │  index worker    │  → orphan cleanup             │
+│  → Knowledge     │  → SystemConfig  │  data_ttl worker              │
+│    Documents     │    fast lookup   │  → retention enforcement      │
+│                  │                  │                               │
+│  Search: hybrid  │  Search: keyword │  Search: FTS5 BM25 (25%)     │
+│  via RAG         │  match on JSON   │  + semantic (40%)            │
+│                  │                  │  + keyword (20%) + tag (15%) │
+└──────────────────┴──────────────────┴───────────────────────────────┘
+```
 
 ---
 
@@ -481,11 +613,29 @@ The SDK generator (`api/services/sdk_generator.py`) creates complete SDK JSON fr
 - Documentation and versioning
 - Hash verification for integrity
 
-### 6.5 — Cardinal Rules
+### 6.5 — Per-Function Visibility Toggle
+
+Users control which functions appear in their SDK at the individual function level:
+
+```
+PUT /repo/contracts/{slug}/functions/{function_id}/toggle
+Body: { "is_sdk_enabled": true|false }
+```
+
+When toggled, the system:
+1. Updates `ContractFunction.is_sdk_enabled` in the database
+2. Regenerates the `SDKDefinition` with only enabled functions
+3. Emits `registry.sdk.function_toggled` event on the EventBus
+4. The `_on_sdk_publish` handler bridges the updated SDK into the knowledge base
+5. The `knowledge_sync` worker catches any drift every 5 minutes
+
+The frontend at `/repo` provides checkboxes next to each parsed function for visual toggling.
+
+### 6.6 — Cardinal Rules
 
 1. **Source code is PRIVATE** — the `source_code` column in `contract_repos` is NEVER returned in API responses. GROOT never reads source code.
 2. **GROOT reads SDK definitions** — the `sdk_definitions` table is what GROOT queries for CAG context and what the MCP gateway exposes.
-3. **Users control visibility** — contracts can be toggled between private and public. Only public SDKs are visible to GROOT and other users.
+3. **Users control visibility** — contracts can be toggled between private and public. Individual functions can be enabled/disabled in the SDK. Only public SDKs with enabled functions are visible to GROOT and other users.
 
 ---
 
@@ -661,7 +811,7 @@ For each matching subscription:
 
 ---
 
-## 11. Knowledge Base
+## 11. Knowledge Base & CAG Pipeline
 
 ### 11.1 — Document Ingestion
 
@@ -679,7 +829,51 @@ Supported formats and their parsers:
 | URL | url_parser | Web page content extraction |
 | YouTube | youtube_parser | Transcript extraction |
 
-### 11.2 — Additional Services
+### 11.2 — Contract Augmented Generation (CAG)
+
+CAG is the pipeline that makes user-uploaded smart contract SDKs searchable by GROOT without requiring an LLM in the ingestion path.
+
+```
+User toggles function → SDK regenerated → Event emitted → Knowledge bridge
+       │                       │                │                │
+       ▼                       ▼                ▼                ▼
+  PUT /repo/              sdk_generator.py   registry.sdk.*    ingest_sdk_to_
+  contracts/{slug}/       rebuilds SDK JSON   event via         knowledge()
+  functions/{id}/toggle   with enabled fns    EventBus          in contract_brain.py
+```
+
+**Flow:**
+1. User toggles `is_sdk_enabled` on individual functions via the repo UI
+2. `_regenerate_sdk()` rebuilds the SDK JSON with only enabled functions
+3. Event `registry.sdk.function_toggled` fires on the EventBus
+4. `_on_sdk_publish()` handler calls `ingest_sdk_to_knowledge()` which converts SDK to markdown and creates `KnowledgeDocument` + `KnowledgeChunk` rows with embeddings
+5. `knowledge_sync` worker (every 5 min) catches any drift by comparing SDK hashes vs knowledge content hashes — resilient to missed events
+
+**Cardinal rule:** GROOT never sees source code. Only `SDKDefinition` rows where `is_public=True`.
+
+### 11.3 — Capability Index
+
+A deterministic, non-embedding JSON map of all public contract functions. Built by the `capability_index` worker (every 10 min), stored in `SystemConfig`. GROOT uses this for fast keyword-match lookups when semantic search misses exact function names.
+
+```json
+{
+  "contracts": [{
+    "slug": "user/token-contract",
+    "chain": "ethereum",
+    "address": "0x...",
+    "functions": [{
+      "name": "transfer",
+      "selector": "0xa9059cbb",
+      "signature": "transfer(address,uint256)",
+      "access_level": "public",
+      "state_mutability": "nonpayable"
+    }]
+  }],
+  "generated_at": "2026-03-19T..."
+}
+```
+
+### 11.4 — Additional Services
 
 - **Auto-tagging** (`auto_tagger.py`): automatic tag generation and category classification
 - **Document comparison** (`document_compare.py`): semantic similarity, keyword overlap, structure diff
@@ -802,7 +996,19 @@ Configure Watcher → Poll Chain RPC → Match Events → Trigger Webhook/Action
   watchers           scanning            matching            or internal handler
 ```
 
-### 15.2 — Safety
+### 15.2 — Chain Event → Knowledge Bridge
+
+The `chain_event_indexer` worker (every 60s) converts raw `ChainEvent` rows into searchable `KnowledgeDocument` entries so GROOT can answer questions about on-chain activity:
+
+1. Reads `ChainEvent` rows since last indexed timestamp (marker in `SystemConfig`)
+2. Groups events by `(chain, contract_address)`
+3. Builds deterministic markdown summary: event counts, latest block, recent tx hashes
+4. Upserts `KnowledgeDocument` with category `chain-activity`
+5. Updates timestamp marker for next run
+
+No LLM is involved — the indexer is a pure I/O pipeline.
+
+### 15.3 — Safety
 
 Chain watchers may **detect** events but may **never** initiate state-changing on-chain transactions autonomously. This is enforced at the service layer (see [SAFETY.md](SAFETY.md)).
 
@@ -856,21 +1062,61 @@ Remote config is a JSON blob that agents cache locally. Admins update config via
 
 ## 18. Background Workers & Task Scheduler
 
-The `TaskScheduler` singleton ticks every 10 seconds and dispatches registered tasks:
+The `TaskScheduler` singleton ticks every 10 seconds and dispatches registered tasks via dynamic import (`importlib`). Handlers can be sync or async functions. All tasks are stored in the `scheduled_tasks` table (internal.db) and can be enabled/disabled at runtime.
 
-| Worker | Interval | Purpose |
+### 18.1 — Platform Workers (Infrastructure)
+
+| Worker | Interval | Handler | Purpose |
+|---|---|---|---|
+| Health monitor | 60s | `scheduler.health_check_handler` | Check inference, DB, SMTP; log to health_check_log |
+| P2P cleanup | 60s | `scheduler.p2p_cleanup_handler` | Remove stale peers (>2 min without heartbeat) |
+| Auth cleanup | 3600s | `scheduler.auth_cleanup_handler` | Expire nonces (>10 min) and revoked refresh tokens |
+| Agent memory cleanup | 300s | `scheduler.memory_cleanup_handler` | Remove expired working memory entries |
+| API counter reset | 86400s | `scheduler.api_counter_reset_handler` | Reset daily API key request counters |
+| Telemetry prune | 86400s | `scheduler.telemetry_prune_handler` | Remove IoT telemetry > 30 days old |
+
+### 18.2 — Brain Workers (Deterministic I/O Pipelines)
+
+Five workers that wire GROOT's three brains together. All are pure input→transform→output — **zero LLM dependency**. Defined in `api/services/workers.py`.
+
+| Worker | Interval | Handler | Purpose |
+|---|---|---|---|
+| Knowledge sync | 300s | `workers.knowledge_sync_worker` | Reconcile SDK↔Knowledge by hash comparison; re-ingest stale, remove privatized |
+| Knowledge GC | 3600s | `workers.knowledge_gc_worker` | Delete orphaned chunks and inactive documents |
+| Chain event indexer | 60s | `workers.chain_event_indexer` | Convert ChainEvent rows into searchable KnowledgeDocuments |
+| Data TTL | 3600s | `workers.data_ttl_worker` | Enforce four-tier data retention policies |
+| Capability index | 600s | `workers.capability_index_worker` | Build SHA-256-guarded JSON map of all public contract functions |
+
+**Knowledge sync** — Queries all `SDKDefinition` rows joined with `ContractRepo`. For each public SDK, computes SHA-256 of `sdk_json` and compares against the corresponding `KnowledgeDocument.content_hash`. If the hash differs or the document is missing, calls `ingest_sdk_to_knowledge()`. If a contract was made private, deletes the knowledge document and its chunks.
+
+**Knowledge GC** — Finds `KnowledgeChunk` rows whose parent `KnowledgeDocument` no longer exists or has `is_active=False`. Deletes orphans to prevent GROOT from searching stale data.
+
+**Chain event indexer** — Reads new `ChainEvent` rows since a timestamp marker (stored in `SystemConfig.chain_indexer.last_run`). Groups events by `(chain, contract_address)`, builds deterministic markdown summaries (event counts, latest block, recent tx hashes), and upserts `KnowledgeDocument` rows with category `chain-activity`.
+
+**Data TTL** — Enforces retention policies across both databases:
+
+| Table | Retention | Database |
 |---|---|---|
-| Health monitor | 60s | Check inference, DB, SMTP; log to health_check_log |
-| P2P cleanup | 60s | Remove stale peers (>2 min without heartbeat) |
-| Auth cleanup | 3600s | Expire nonces (>10 min) and revoked refresh tokens |
-| Agent memory cleanup | 300s | Remove expired working memory entries |
+| chain_events | 90 days | public.db |
+| usage_records | 180 days | public.db |
+| agent_memory_episodic | 30 days | public.db |
+| wallet_sessions (inactive) | 30 days | public.db |
+| health_check_logs | 30 days | internal.db |
+| script_executions | 90 days | internal.db |
+
+**Capability index** — Queries all public, active `ContractRepo` rows and their enabled `ContractFunction` rows. Builds a JSON map with function names, selectors, signatures, access levels. Computes SHA-256 and only writes to `SystemConfig` if the hash changed.
+
+### 18.3 — Supporting Services
+
+| Service | Type | Purpose |
+|---|---|---|
 | Webhook delivery | Async queue | HMAC-signed delivery with exponential backoff retry |
 | Chain listener | Configurable | Block-by-block event polling per watcher |
-| Script runner | On-demand | Safe execution of categorized scripts (ops, maintenance, analysis, chain, dapp) |
+| Script runner | On-demand | Safe execution of categorized scripts |
 | SMTP bridge | Persistent | aiosmtpd server on port 8025 for email routing |
 | Event bus | Event-driven | In-process pub/sub with wildcard pattern matching |
 
-### 18.1 — Script Runner
+### 18.4 — Script Runner
 
 The script runner (`api/services/script_runner.py`) executes Python scripts from the `scripts/` directory with category-based access control. Agents can only run scripts their SOUL authorizes (e.g., `execute_script:maintenance.*`).
 
@@ -1148,6 +1394,7 @@ Of 210+ endpoints, only the inference route and agent cognitive loop touch the B
 | wallet_crypto.py | HKDF key derivation, AES-256-GCM per-wallet encryption |
 | wallet_service.py | Custodial wallet creation, signing, share management |
 | webhook_delivery.py | Async delivery worker with retry and backoff |
+| workers.py | 5 deterministic I/O workers: knowledge_sync, knowledge_gc, chain_event_indexer, data_ttl, capability_index |
 | youtube_parser.py | YouTube transcript extraction |
 
 ---

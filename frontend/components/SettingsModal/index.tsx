@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { API_URL } from '@/lib/config'
 
-type SettingsTab = 'account' | 'security' | 'api-keys' | 'admin'
+type SettingsTab = 'account' | 'security' | 'api-keys' | 'providers' | 'models' | 'admin'
 
 interface SettingsModalProps {
   open: boolean
@@ -176,6 +176,8 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     { id: 'account', label: 'Account', show: true },
     { id: 'security', label: 'Security', show: true },
     { id: 'api-keys', label: 'API Keys', show: true },
+    { id: 'providers', label: 'AI Services', show: true },
+    { id: 'models', label: 'Models', show: true },
     { id: 'admin', label: 'Admin', show: !!isAdmin },
   ]
 
@@ -358,7 +360,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
               )}
 
               {/* ── API Keys Tab ── */}
-              {tab === 'api-keys' && (
+              {tab === 'api-keys' && (<SecurityGate>
                 <div>
                   {/* New key banner — stays visible until user closes it */}
                   {newApiKey && (
@@ -507,9 +509,13 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
                     </div>
                   )}
                 </div>
-              )}
+              </SecurityGate>)}
 
               {/* ── Admin Tab ── */}
+              {tab === 'providers' && <SecurityGate><UserProviderKeysPanel /></SecurityGate>}
+
+              {tab === 'models' && <ModelPreferencesPanel />}
+
               {tab === 'admin' && isAdmin && (
                 <div>
                   <Link href="/admin/" onClick={onClose} style={{ color: 'var(--refi-teal)', fontSize: 13, textDecoration: 'underline', textUnderlineOffset: 2 }}>
@@ -552,6 +558,349 @@ function SectionBlock({ title, description, children }: { title: string; descrip
       <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>{title}</h3>
       <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 12 }}>{description}</p>
       {children}
+    </div>
+  )
+}
+
+function SecurityGate({ children }: { children: React.ReactNode }) {
+  const [security, setSecurity] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+
+  const token = typeof window !== 'undefined' ? localStorage.getItem('refinet_token') : ''
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  useEffect(() => {
+    fetch(`${API_URL}/provider-keys/security-status`, { headers })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { setSecurity(d); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div style={{ padding: 20, color: 'var(--text-tertiary)', fontSize: 12 }}>Checking security status...</div>
+
+  if (security?.all_layers_complete !== true) {
+    const layers = [
+      { key: 'layer_3_complete', name: 'Wallet Auth (SIWE)', desc: 'Sign in with your Ethereum wallet', icon: '\uD83D\uDD10' },
+      { key: 'layer_1_complete', name: 'Email + Password', desc: 'Set a password in Settings \u2192 Security', icon: '\uD83D\uDCE7' },
+      { key: 'layer_2_complete', name: '2FA (TOTP)', desc: 'Enable two-factor auth in Settings \u2192 Security', icon: '\uD83D\uDEE1\uFE0F' },
+    ]
+
+    return (
+      <div>
+        <div style={{ padding: 20, borderRadius: 12, background: 'var(--bg-secondary)', border: '1px solid rgba(251,191,36,0.3)', textAlign: 'center' }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>{'\uD83D\uDD12'}</div>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>Security Layers Required</h3>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 16 }}>
+            Complete all three security layers to manage API keys and AI provider connections.
+            This protects your credentials with wallet-grade encryption.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, textAlign: 'left', maxWidth: 360, margin: '0 auto' }}>
+            {layers.map(l => {
+              const complete = security?.[l.key]
+              return (
+                <div key={l.key} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+                  borderRadius: 8, background: complete ? 'rgba(74,222,128,0.08)' : 'var(--bg-tertiary)',
+                  border: `1px solid ${complete ? 'rgba(74,222,128,0.3)' : 'rgba(251,191,36,0.2)'}`,
+                }}>
+                  <span style={{ fontSize: 16 }}>{complete ? '\u2705' : '\u26A0\uFE0F'}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: complete ? 'var(--success)' : 'var(--text-primary)' }}>{l.name}</div>
+                    {!complete && <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 2 }}>{l.desc}</div>}
+                  </div>
+                  {complete && <span style={{ fontSize: 9, color: 'var(--success)', fontWeight: 600 }}>DONE</span>}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return <>{children}</>
+}
+
+function UserProviderKeysPanel() {
+  const [catalog, setCatalog] = useState<any[]>([])
+  const [userKeys, setUserKeys] = useState<any[]>([])
+  const [adding, setAdding] = useState<string | null>(null)
+  const [keyInput, setKeyInput] = useState('')
+  const [urlInput, setUrlInput] = useState('')
+  const [nameInput, setNameInput] = useState('')
+  const [msg, setMsg] = useState('')
+  const [testing, setTesting] = useState<string | null>(null)
+  const [testResult, setTestResult] = useState<Record<string, any>>({})
+
+  const token = typeof window !== 'undefined' ? localStorage.getItem('refinet_token') : ''
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const load = () => {
+    fetch(`${API_URL}/provider-keys/catalog`).then(r => r.json()).then(setCatalog).catch(() => {})
+    fetch(`${API_URL}/provider-keys`, { headers }).then(r => r.ok ? r.json() : []).then(setUserKeys).catch(() => {})
+  }
+
+  useEffect(() => { load() }, [])
+
+  const COLORS: Record<string, string> = {
+    openai: '#10A37F', anthropic: '#D97706', gemini: '#4285F4', openrouter: '#F97316',
+    replicate: '#3B82F6', stability: '#A78BFA', together: '#06B6D4', groq: '#F43F5E',
+    mistral: '#FF7000', perplexity: '#22D3EE', ollama: '#84CC16', lmstudio: '#A78BFA', custom: '#6B7280',
+  }
+
+  const saveKey = async (providerType: string) => {
+    setMsg('')
+    try {
+      const body: any = { provider_type: providerType, display_name: nameInput || `My ${providerType} key`, api_key: keyInput }
+      if (urlInput) body.base_url = urlInput
+      const r = await fetch(`${API_URL}/provider-keys`, { method: 'POST', headers, body: JSON.stringify(body) })
+      const d = await r.json()
+      if (!r.ok) { setMsg(d.detail || 'Error'); return }
+      setMsg(d.updated ? 'Key updated' : 'Key saved')
+      setAdding(null); setKeyInput(''); setUrlInput(''); setNameInput('')
+      load()
+    } catch { setMsg('Network error') }
+  }
+
+  const deleteKey = async (id: string) => {
+    await fetch(`${API_URL}/provider-keys/${id}`, { method: 'DELETE', headers })
+    load()
+  }
+
+  const testKey = async (id: string) => {
+    setTesting(id)
+    try {
+      const r = await fetch(`${API_URL}/provider-keys/${id}/test`, { method: 'POST', headers })
+      const d = await r.json()
+      setTestResult(prev => ({ ...prev, [id]: d }))
+    } catch { setTestResult(prev => ({ ...prev, [id]: { status: 'error', message: 'Network error' } })) }
+    setTesting(null)
+  }
+
+  const connectedTypes = new Set(userKeys.map((k: any) => k.provider_type))
+
+  return (
+    <div>
+      <SectionBlock title="Your AI Service Connections" description="Connect your own API keys to use any AI provider directly through GROOT. Keys are encrypted with AES-256-GCM.">
+        {/* Connected Keys */}
+        {userKeys.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+            {userKeys.map((k: any) => {
+              const color = COLORS[k.provider_type] || '#888'
+              const tr = testResult[k.id]
+              return (
+                <div key={k.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
+                  borderRadius: 8, background: 'var(--bg-tertiary)', border: `1px solid ${color}30`,
+                }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{k.display_name}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)', fontFamily: "'JetBrains Mono', monospace" }}>
+                      {k.provider_type} &middot; {k.key_preview} &middot; {k.usage_count} uses
+                    </div>
+                  </div>
+                  <button onClick={() => testKey(k.id)} disabled={testing === k.id}
+                    style={{ fontSize: 10, padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border-subtle)', background: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                    {testing === k.id ? '...' : 'Test'}
+                  </button>
+                  {tr && (
+                    <span style={{ fontSize: 9, color: tr.status === 'ok' ? 'var(--success)' : 'var(--error)' }}>
+                      {tr.status === 'ok' ? `${tr.latency_ms}ms` : 'Fail'}
+                    </span>
+                  )}
+                  <button onClick={() => deleteKey(k.id)}
+                    style={{ fontSize: 10, padding: '3px 8px', borderRadius: 6, border: 'none', background: 'rgba(248,113,113,0.1)', color: 'var(--error)', cursor: 'pointer' }}>
+                    Remove
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {userKeys.length === 0 && (
+          <p style={{ fontSize: 12, color: 'var(--text-tertiary)', fontStyle: 'italic', marginBottom: 12 }}>
+            No provider keys connected yet. Add one below to use models from OpenAI, Anthropic, Google, and more.
+          </p>
+        )}
+      </SectionBlock>
+
+      <div style={{ height: 12 }} />
+
+      {/* Provider Catalog */}
+      <SectionBlock title="Available Providers" description="Click any provider to add your API key. Your key is encrypted and never leaves the server.">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+          {catalog.map((p: any) => {
+            const color = COLORS[p.type] || '#888'
+            const connected = connectedTypes.has(p.type)
+            return (
+              <button key={p.type} onClick={() => { setAdding(p.type); setNameInput(`My ${p.name} key`); setUrlInput(p.base_url || ''); setKeyInput('') }}
+                style={{
+                  padding: '10px 12px', borderRadius: 8, textAlign: 'left', cursor: 'pointer',
+                  background: adding === p.type ? `${color}15` : 'var(--bg-secondary)',
+                  border: `1px solid ${connected ? color + '50' : adding === p.type ? color + '40' : 'var(--border-subtle)'}`,
+                  transition: 'all 0.15s',
+                }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{p.name}</span>
+                  {connected && <span style={{ fontSize: 8, background: `${color}20`, color, padding: '1px 5px', borderRadius: 4, fontWeight: 600 }}>CONNECTED</span>}
+                  {p.free_tier && !connected && <span style={{ fontSize: 8, background: 'rgba(92,224,210,0.15)', color: '#5CE0D2', padding: '1px 5px', borderRadius: 4 }}>FREE</span>}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-tertiary)', lineHeight: 1.4 }}>{p.description}</div>
+                <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+                  {(p.capabilities || []).map((c: string) => (
+                    <span key={c} style={{ fontSize: 8, padding: '1px 5px', borderRadius: 3, background: 'var(--bg-tertiary)', color: 'var(--text-tertiary)' }}>{c}</span>
+                  ))}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </SectionBlock>
+
+      {/* Add Key Form */}
+      {adding && (() => {
+        const entry = catalog.find((p: any) => p.type === adding)
+        if (!entry) return null
+        const color = COLORS[adding] || '#888'
+        return (
+          <div style={{ marginTop: 12, padding: 14, borderRadius: 10, background: 'var(--bg-secondary)', border: `1px solid ${color}40` }}>
+            <h3 style={{ fontSize: 13, fontWeight: 600, color, marginBottom: 8 }}>Connect {entry.name}</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div>
+                <label style={{ fontSize: 10, color: 'var(--text-tertiary)', display: 'block', marginBottom: 3 }}>Display Name</label>
+                <input value={nameInput} onChange={e => setNameInput(e.target.value)}
+                  style={{ width: '100%', padding: '6px 10px', fontSize: 12, borderRadius: 6, border: '1px solid var(--border-default)', background: 'var(--bg-primary)', color: 'var(--text-primary)', outline: 'none' }} />
+              </div>
+              {entry.auth_type !== 'url_only' && (
+                <div>
+                  <label style={{ fontSize: 10, color: 'var(--text-tertiary)', display: 'block', marginBottom: 3 }}>
+                    API Key {entry.key_url && <a href={entry.key_url} target="_blank" rel="noopener" style={{ color, textDecoration: 'underline', marginLeft: 4 }}>Get key →</a>}
+                  </label>
+                  <input type="password" value={keyInput} onChange={e => setKeyInput(e.target.value)} placeholder="sk-... / key-..."
+                    style={{ width: '100%', padding: '6px 10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace", borderRadius: 6, border: '1px solid var(--border-default)', background: 'var(--bg-primary)', color: 'var(--text-primary)', outline: 'none' }} />
+                </div>
+              )}
+              {(entry.auth_type === 'url_only' || entry.auth_type === 'api_key_and_url' || entry.type === 'custom') && (
+                <div>
+                  <label style={{ fontSize: 10, color: 'var(--text-tertiary)', display: 'block', marginBottom: 3 }}>Base URL</label>
+                  <input value={urlInput} onChange={e => setUrlInput(e.target.value)} placeholder={entry.base_url || 'https://...'}
+                    style={{ width: '100%', padding: '6px 10px', fontSize: 12, fontFamily: "'JetBrains Mono', monospace", borderRadius: 6, border: '1px solid var(--border-default)', background: 'var(--bg-primary)', color: 'var(--text-primary)', outline: 'none' }} />
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+                <button onClick={() => saveKey(adding)} style={{ padding: '6px 16px', fontSize: 12, fontWeight: 600, borderRadius: 6, background: color, color: '#fff', border: 'none', cursor: 'pointer' }}>
+                  Save Key
+                </button>
+                <button onClick={() => { setAdding(null); setMsg('') }} style={{ padding: '6px 16px', fontSize: 12, borderRadius: 6, background: 'none', color: 'var(--text-tertiary)', border: '1px solid var(--border-subtle)', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                {msg && <span style={{ fontSize: 11, color: msg.includes('error') || msg.includes('Error') ? 'var(--error)' : 'var(--success)' }}>{msg}</span>}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+    </div>
+  )
+}
+
+function ModelPreferencesPanel() {
+  const [models, setModels] = useState<any[]>([])
+  const [preferred, setPreferred] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('refinet_preferred_model') || 'bitnet-b1.58-2b'
+    return 'bitnet-b1.58-2b'
+  })
+  const [grounding, setGrounding] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('refinet_grounding') === 'true'
+    return false
+  })
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    fetch(`${API_URL}/v1/models`)
+      .then(r => r.ok ? r.json() : { data: [] })
+      .then(d => setModels(d.data || []))
+      .catch(() => {})
+  }, [])
+
+  const PROVIDER_COLORS: Record<string, string> = {
+    refinet: '#5CE0D2', google: '#4285F4', ollama: '#84CC16',
+    lmstudio: '#A78BFA', openrouter: '#F97316',
+  }
+
+  const handleSave = () => {
+    localStorage.setItem('refinet_preferred_model', preferred)
+    localStorage.setItem('refinet_grounding', String(grounding))
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  return (
+    <div>
+      <SectionBlock title="Default Model" description="Choose which AI model GROOT uses by default. You can also switch mid-conversation in the chat header.">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {models.map((m: any) => {
+            const color = PROVIDER_COLORS[m.provider || m.owned_by] || '#888'
+            return (
+              <label key={m.id} style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
+                borderRadius: 8, cursor: 'pointer', transition: 'background 0.1s',
+                background: preferred === m.id ? 'var(--bg-tertiary)' : 'transparent',
+                border: preferred === m.id ? `1px solid ${color}40` : '1px solid transparent',
+              }}>
+                <input type="radio" name="model" value={m.id} checked={preferred === m.id}
+                  onChange={() => setPreferred(m.id)}
+                  style={{ accentColor: color }} />
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                <span style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', flex: 1 }}>{m.id}</span>
+                <span style={{ fontSize: 9, color: 'var(--text-tertiary)' }}>{m.provider || m.owned_by}</span>
+                {m.is_free !== false && (
+                  <span style={{ fontSize: 8, background: 'rgba(92,224,210,0.15)', color: '#5CE0D2', padding: '1px 5px', borderRadius: 4, fontWeight: 600 }}>FREE</span>
+                )}
+              </label>
+            )
+          })}
+          {models.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', fontStyle: 'italic', padding: 8 }}>Loading available models...</div>
+          )}
+        </div>
+      </SectionBlock>
+
+      <div style={{ height: 12 }} />
+
+      <SectionBlock title="Google Search Grounding" description="When enabled, Gemini models can search the web for up-to-date information before answering.">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+          <div onClick={() => setGrounding(!grounding)} style={{
+            width: 36, height: 20, borderRadius: 10, position: 'relative', cursor: 'pointer',
+            background: grounding ? '#4285F4' : 'var(--bg-tertiary)', transition: 'background 0.15s',
+          }}>
+            <div style={{
+              position: 'absolute', top: 2, width: 16, height: 16, borderRadius: '50%', background: 'white',
+              transition: 'transform 0.15s', transform: grounding ? 'translateX(18px)' : 'translateX(2px)',
+            }} />
+          </div>
+          <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>
+            Enable grounding for Gemini models
+          </span>
+        </label>
+        <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8 }}>
+          Only applies when using gemini-* models. A search toggle also appears in the chat header.
+        </p>
+      </SectionBlock>
+
+      <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button onClick={handleSave} style={{
+          padding: '8px 20px', fontSize: 12, fontWeight: 600, borderRadius: 8,
+          background: 'var(--refi-teal)', color: '#000', border: 'none', cursor: 'pointer',
+        }}>
+          Save Preferences
+        </button>
+        {saved && <span style={{ fontSize: 12, color: 'var(--success)' }}>Saved</span>}
+      </div>
     </div>
   )
 }

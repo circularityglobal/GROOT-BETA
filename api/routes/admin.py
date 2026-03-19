@@ -654,6 +654,681 @@ def usage_summary(
     }
 
 
+# ── App Store Management ──────────────────────────────────────────
+
+@router.get("/apps")
+def admin_list_apps_route(
+    request: Request,
+    category: str = None,
+    include_inactive: bool = False,
+    page: int = 1,
+    page_size: int = 50,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """List all app store listings (including unpublished)."""
+    _require_admin(request, int_db)
+    from api.services.app_store import admin_list_apps
+    return admin_list_apps(pub_db, include_inactive=include_inactive, category=category, page=page, page_size=page_size)
+
+
+@router.get("/apps/stats")
+def admin_app_store_stats_route(
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Get app store statistics."""
+    _require_admin(request, int_db)
+    from api.services.app_store import admin_store_stats
+    return admin_store_stats(pub_db)
+
+
+@router.post("/apps/publish")
+def admin_publish_product_route(
+    body: dict,
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Admin: publish a product directly to the App Store."""
+    admin_id, admin_name = _require_admin(request, int_db)
+
+    name = body.get("name")
+    category = body.get("category")
+    if not name or not category:
+        raise HTTPException(status_code=400, detail="'name' and 'category' are required")
+
+    from api.services.app_store import admin_publish_product
+    result = admin_publish_product(
+        pub_db,
+        admin_user_id=admin_id,
+        name=name,
+        description=body.get("description", ""),
+        category=category,
+        readme=body.get("readme"),
+        chain=body.get("chain"),
+        version=body.get("version", "1.0.0"),
+        icon_url=body.get("icon_url"),
+        screenshots=body.get("screenshots"),
+        tags=body.get("tags"),
+        price_type=body.get("price_type", "free"),
+        price_amount=float(body.get("price_amount", 0)),
+        price_token=body.get("price_token"),
+        price_token_amount=float(body["price_token_amount"]) if body.get("price_token_amount") else None,
+        license_type=body.get("license_type", "open"),
+        download_url=body.get("download_url"),
+        external_url=body.get("external_url"),
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    # Audit
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="PUBLISH_STORE_PRODUCT",
+        target_type="app_listing",
+        target_id=result.get("id"),
+        details=json.dumps({"name": name, "category": category, "price_type": body.get("price_type", "free")}),
+        ip_address=request.client.host if request.client else None,
+    ))
+
+    return result
+
+
+@router.put("/apps/{app_id}/verify")
+def admin_verify_app_route(
+    app_id: str,
+    body: dict,
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Admin: verify or unverify an app listing."""
+    admin_id, admin_name = _require_admin(request, int_db)
+    from api.services.app_store import admin_verify_app
+    verified = body.get("verified", True)
+    result = admin_verify_app(pub_db, app_id, verified=verified)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="VERIFY_APP" if verified else "UNVERIFY_APP",
+        target_type="app_listing",
+        target_id=app_id,
+        ip_address=request.client.host if request.client else None,
+    ))
+
+    return result
+
+
+@router.put("/apps/{app_id}/feature")
+def admin_feature_app_route(
+    app_id: str,
+    body: dict,
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Admin: feature or unfeature an app listing."""
+    admin_id, admin_name = _require_admin(request, int_db)
+    from api.services.app_store import admin_feature_app
+    featured = body.get("featured", True)
+    result = admin_feature_app(pub_db, app_id, featured=featured)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="FEATURE_APP" if featured else "UNFEATURE_APP",
+        target_type="app_listing",
+        target_id=app_id,
+        ip_address=request.client.host if request.client else None,
+    ))
+
+    return result
+
+
+@router.put("/apps/{app_id}/status")
+def admin_set_app_status_route(
+    app_id: str,
+    body: dict,
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Admin: activate or deactivate an app listing."""
+    admin_id, admin_name = _require_admin(request, int_db)
+    from api.services.app_store import admin_deactivate_app
+    active = body.get("active", True)
+    result = admin_deactivate_app(pub_db, app_id, active=active)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="ACTIVATE_APP" if active else "DEACTIVATE_APP",
+        target_type="app_listing",
+        target_id=app_id,
+        ip_address=request.client.host if request.client else None,
+    ))
+
+    return result
+
+
+# ── Submission Review Pipeline ─────────────────────────────────────
+
+@router.get("/submissions")
+def admin_list_submissions_route(
+    request: Request,
+    status: str = None,
+    category: str = None,
+    page: int = 1,
+    page_size: int = 50,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """List all app submissions for review."""
+    _require_admin(request, int_db)
+    from api.services.submission import admin_list_submissions
+    return admin_list_submissions(pub_db, status=status, category=category, page=page, page_size=page_size)
+
+
+@router.get("/submissions/stats")
+def admin_submission_stats_route(
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Get submission pipeline statistics."""
+    _require_admin(request, int_db)
+    from api.services.submission import submission_stats
+    return submission_stats(pub_db)
+
+
+@router.get("/submissions/{submission_id}")
+def admin_get_submission_route(
+    submission_id: str,
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Get full submission detail with notes."""
+    _require_admin(request, int_db)
+    from api.services.submission import get_submission_detail
+    result = get_submission_detail(pub_db, submission_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    return result
+
+
+@router.put("/submissions/{submission_id}/claim")
+def admin_claim_submission_route(
+    submission_id: str,
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Claim a submission for review."""
+    admin_id, admin_name = _require_admin(request, int_db)
+    from api.services.submission import claim_submission
+    result = claim_submission(pub_db, submission_id, admin_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="CLAIM_SUBMISSION",
+        target_type="app_submission",
+        target_id=submission_id,
+        ip_address=request.client.host if request.client else None,
+    ))
+    return result
+
+
+@router.post("/submissions/{submission_id}/notes")
+def admin_add_note_route(
+    submission_id: str,
+    body: dict,
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Add a review note to a submission."""
+    admin_id, _ = _require_admin(request, int_db)
+    content = body.get("content")
+    if not content:
+        raise HTTPException(status_code=400, detail="'content' is required")
+    from api.services.submission import add_review_note
+    result = add_review_note(pub_db, submission_id, admin_id, content, body.get("note_type", "comment"))
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@router.put("/submissions/{submission_id}/request-changes")
+def admin_request_changes_route(
+    submission_id: str,
+    body: dict,
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Request changes from the developer."""
+    admin_id, admin_name = _require_admin(request, int_db)
+    reason = body.get("reason")
+    if not reason:
+        raise HTTPException(status_code=400, detail="'reason' is required")
+    from api.services.submission import request_changes
+    result = request_changes(pub_db, submission_id, admin_id, reason)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="REQUEST_CHANGES",
+        target_type="app_submission",
+        target_id=submission_id,
+        details=json.dumps({"reason": reason[:200]}),
+        ip_address=request.client.host if request.client else None,
+    ))
+    return result
+
+
+@router.put("/submissions/{submission_id}/approve")
+def admin_approve_submission_route(
+    submission_id: str,
+    body: dict,
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Approve a submission and publish it to the App Store."""
+    admin_id, admin_name = _require_admin(request, int_db)
+    from api.services.submission import approve_submission
+    result = approve_submission(pub_db, submission_id, admin_id, note=body.get("note", ""))
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="APPROVE_SUBMISSION",
+        target_type="app_submission",
+        target_id=submission_id,
+        ip_address=request.client.host if request.client else None,
+    ))
+    return result
+
+
+@router.put("/submissions/{submission_id}/reject")
+def admin_reject_submission_route(
+    submission_id: str,
+    body: dict,
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Reject a submission with reason."""
+    admin_id, admin_name = _require_admin(request, int_db)
+    reason = body.get("reason")
+    if not reason:
+        raise HTTPException(status_code=400, detail="'reason' is required")
+    from api.services.submission import reject_submission
+    result = reject_submission(pub_db, submission_id, admin_id, reason)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="REJECT_SUBMISSION",
+        target_type="app_submission",
+        target_id=submission_id,
+        details=json.dumps({"reason": reason[:200]}),
+        ip_address=request.client.host if request.client else None,
+    ))
+    return result
+
+
+# ── Sandbox Management ────────────────────────────────────────────
+
+@router.post("/submissions/{submission_id}/sandbox")
+def admin_provision_sandbox_route(
+    submission_id: str,
+    request: Request,
+    body: dict = None,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Spin up an isolated Docker sandbox for reviewing a submission."""
+    admin_id, admin_name = _require_admin(request, int_db)
+    from api.services.sandbox import provision_sandbox
+    result = provision_sandbox(
+        int_db,
+        submission_id=submission_id,
+        created_by=admin_id,
+        resource_limits=(body or {}).get("resource_limits"),
+    )
+    if "error" in result:
+        status = 409 if "already exists" in result["error"] else 400
+        raise HTTPException(status_code=status, detail=result["error"])
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="PROVISION_SANDBOX",
+        target_type="sandbox",
+        target_id=result.get("sandbox_id"),
+        details=json.dumps({"submission_id": submission_id}),
+        ip_address=request.client.host if request.client else None,
+    ))
+    return result
+
+
+@router.get("/submissions/{submission_id}/sandbox")
+def admin_get_sandbox_route(
+    submission_id: str,
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Get sandbox status for a submission."""
+    _require_admin(request, int_db)
+    from api.models.internal import SandboxEnvironment
+    sandbox = int_db.query(SandboxEnvironment).filter(
+        SandboxEnvironment.submission_id == submission_id,
+        SandboxEnvironment.status.in_(["provisioning", "ready", "running", "stopped"]),
+    ).first()
+    if not sandbox:
+        raise HTTPException(status_code=404, detail="No active sandbox for this submission")
+    from api.services.sandbox import get_sandbox_status
+    return get_sandbox_status(int_db, sandbox.id)
+
+
+@router.get("/submissions/{submission_id}/sandbox/logs")
+def admin_get_sandbox_logs_route(
+    submission_id: str,
+    request: Request,
+    tail: int = 100,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Get runtime logs from the sandbox."""
+    _require_admin(request, int_db)
+    from api.models.internal import SandboxEnvironment
+    sandbox = int_db.query(SandboxEnvironment).filter(
+        SandboxEnvironment.submission_id == submission_id,
+    ).order_by(SandboxEnvironment.created_at.desc()).first()
+    if not sandbox:
+        raise HTTPException(status_code=404, detail="No sandbox found for this submission")
+    from api.services.sandbox import get_sandbox_logs
+    return get_sandbox_logs(int_db, sandbox.id, tail=tail)
+
+
+@router.delete("/submissions/{submission_id}/sandbox")
+def admin_destroy_sandbox_route(
+    submission_id: str,
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Tear down the sandbox for a submission."""
+    admin_id, admin_name = _require_admin(request, int_db)
+    from api.models.internal import SandboxEnvironment
+    sandbox = int_db.query(SandboxEnvironment).filter(
+        SandboxEnvironment.submission_id == submission_id,
+        SandboxEnvironment.status.in_(["provisioning", "ready", "running", "stopped"]),
+    ).first()
+    if not sandbox:
+        raise HTTPException(status_code=404, detail="No active sandbox for this submission")
+    from api.services.sandbox import destroy_sandbox
+    result = destroy_sandbox(int_db, sandbox.id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="DESTROY_SANDBOX",
+        target_type="sandbox",
+        target_id=sandbox.id,
+        ip_address=request.client.host if request.client else None,
+    ))
+    return result
+
+
+@router.get("/sandboxes")
+def admin_list_sandboxes_route(
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """List all active sandboxes."""
+    _require_admin(request, int_db)
+    from api.services.sandbox import list_active_sandboxes
+    return list_active_sandboxes(int_db)
+
+
+# ── Model Providers ───────────────────────────────────────────────
+
+@router.get("/providers")
+def list_providers(
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """List all configured model providers with health status."""
+    _require_admin(request, int_db)
+    from api.services.providers.registry import ProviderRegistry
+    from api.services.providers.base import ProviderType
+
+    registry = ProviderRegistry.get()
+    settings = get_settings()
+    result = []
+
+    # All possible providers and their config keys
+    provider_defs = [
+        {
+            "type": "bitnet",
+            "name": "BitNet b1.58-2B (Sovereign)",
+            "description": "1-bit quantized LLM running on Oracle Cloud. Sovereign infrastructure, zero API cost.",
+            "config_key": "BITNET_HOST",
+            "config_value": settings.bitnet_host,
+            "enabled": True,  # Always registered
+        },
+        {
+            "type": "gemini",
+            "name": "Google Gemini",
+            "description": "Google AI Studio free tier. Flash: 15 RPM / 1500 daily. Pro: 2 RPM / 50 daily.",
+            "config_key": "GEMINI_API_KEY",
+            "config_value": "***" if getattr(settings, "gemini_api_key", "") else "",
+            "enabled": bool(getattr(settings, "gemini_api_key", "")),
+        },
+        {
+            "type": "ollama",
+            "name": "Ollama (Local)",
+            "description": "Run open-source models locally. Supports Llama, Mistral, CodeLlama, Phi, and more.",
+            "config_key": "OLLAMA_HOST",
+            "config_value": getattr(settings, "ollama_host", ""),
+            "enabled": bool(getattr(settings, "ollama_host", "")),
+        },
+        {
+            "type": "lmstudio",
+            "name": "LM Studio (Local)",
+            "description": "Desktop app for running local LLMs with OpenAI-compatible API.",
+            "config_key": "LMSTUDIO_HOST",
+            "config_value": getattr(settings, "lmstudio_host", ""),
+            "enabled": bool(getattr(settings, "lmstudio_host", "")),
+        },
+        {
+            "type": "openrouter",
+            "name": "OpenRouter",
+            "description": "Multi-model cloud proxy. Access 100+ models including free-tier options.",
+            "config_key": "OPENROUTER_API_KEY",
+            "config_value": "***" if getattr(settings, "openrouter_api_key", "") else "",
+            "enabled": bool(getattr(settings, "openrouter_api_key", "")),
+        },
+    ]
+
+    for pdef in provider_defs:
+        try:
+            pt = ProviderType(pdef["type"])
+        except ValueError:
+            pt = None
+
+        health = registry.get_health(pt) if pt else None
+        provider = registry.get_provider(pt) if pt else None
+        models = provider.list_models() if provider else []
+
+        result.append({
+            **pdef,
+            "registered": pt in registry._providers if pt else False,
+            "healthy": health.is_healthy if health else None,
+            "latency_ms": health.latency_ms if health else None,
+            "error": health.error if health and not health.is_healthy else None,
+            "models": models,
+        })
+
+    # Get fallback chain
+    chain = [p.value for p in registry._fallback_chain]
+
+    # Get default model
+    default_model = getattr(settings, "default_model", "bitnet-b1.58-2b")
+
+    return {
+        "admin_wallet": settings.admin_wallet,
+        "default_model": default_model,
+        "fallback_chain": chain,
+        "providers": result,
+    }
+
+
+@router.get("/providers/health")
+async def check_all_provider_health(
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Force health check on all registered providers."""
+    _require_admin(request, int_db)
+    from api.services.gateway import provider_health_check_handler
+    await provider_health_check_handler()
+
+    from api.services.providers.registry import ProviderRegistry
+    registry = ProviderRegistry.get()
+
+    results = {}
+    for pt in registry.registered_providers():
+        health = registry.get_health(pt)
+        results[pt.value] = {
+            "healthy": health.is_healthy if health else None,
+            "latency_ms": health.latency_ms if health else None,
+            "error": health.error if health and not health.is_healthy else None,
+            "models": health.available_models if health else [],
+        }
+
+    return results
+
+
+@router.put("/providers/config")
+def update_provider_config(
+    body: dict,
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """
+    Update provider configuration via SystemConfig.
+    Keys: provider.{type}.{setting}
+    Example: provider.gemini.daily_limit = "1500"
+    """
+    admin_id, admin_name = _require_admin(request, int_db)
+
+    key = body.get("key")
+    value = body.get("value")
+    if not key or value is None:
+        raise HTTPException(status_code=400, detail="'key' and 'value' required")
+
+    # Only allow provider.* keys
+    if not key.startswith("provider."):
+        raise HTTPException(status_code=400, detail="Key must start with 'provider.'")
+
+    existing = int_db.query(SystemConfig).filter(SystemConfig.key == key).first()
+    if existing:
+        existing.value = str(value)
+        existing.updated_at = datetime.now(timezone.utc)
+        existing.updated_by = admin_name
+    else:
+        int_db.add(SystemConfig(
+            key=key, value=str(value),
+            data_type="string",
+            description=f"Provider config: {key}",
+            updated_by=admin_name,
+        ))
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="UPDATE_PROVIDER_CONFIG",
+        target_type="provider_config",
+        target_id=key,
+        details=json.dumps({"key": key, "value": str(value)}),
+        ip_address=request.client.host if request.client else None,
+    ))
+
+    return {"message": f"Provider config '{key}' updated"}
+
+
+@router.get("/providers/usage")
+def provider_usage_stats(
+    request: Request,
+    period: str = "day",
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Usage breakdown by provider."""
+    _require_admin(request, int_db)
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    if period == "week":
+        cutoff = now - timedelta(days=7)
+    elif period == "month":
+        cutoff = now - timedelta(days=30)
+    else:
+        cutoff = now - timedelta(days=1)
+
+    rows = pub_db.query(
+        UsageRecord.provider,
+        sqlfunc.count().label("calls"),
+        sqlfunc.sum(UsageRecord.prompt_tokens).label("prompt_tokens"),
+        sqlfunc.sum(UsageRecord.completion_tokens).label("completion_tokens"),
+        sqlfunc.avg(UsageRecord.latency_ms).label("avg_latency"),
+    ).filter(
+        UsageRecord.created_at >= cutoff,
+    ).group_by(UsageRecord.provider).all()
+
+    breakdown = []
+    for row in rows:
+        breakdown.append({
+            "provider": row.provider or "bitnet",
+            "calls": row.calls,
+            "prompt_tokens": row.prompt_tokens or 0,
+            "completion_tokens": row.completion_tokens or 0,
+            "avg_latency_ms": round(row.avg_latency or 0, 1),
+        })
+
+    return {
+        "period": period,
+        "from": cutoff.isoformat(),
+        "to": now.isoformat(),
+        "by_provider": breakdown,
+    }
+
+
+# ── Platform Stats ────────────────────────────────────────────────
+
 @router.get("/stats", response_model=PlatformStats)
 def platform_stats(
     request: Request,

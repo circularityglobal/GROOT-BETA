@@ -40,21 +40,28 @@ async def lifespan(app: FastAPI):
 
     # Seed platform config defaults (only inserts if key doesn't exist)
     try:
-        from api.database import get_internal_session
+        from api.database import get_internal_db
         from api.services.config_defaults import seed_config_defaults
-        with get_internal_session() as int_db:
+        with get_internal_db() as int_db:
             seed_config_defaults(int_db)
     except Exception as e:
         logging.getLogger("refinet").warning(f"Config seed failed: {e}")
 
     # ── Ensure FTS5 index exists for knowledge search ───────────
     try:
-        from api.database import get_public_session
+        from api.database import get_public_db
         from api.services.fts import ensure_fts5
-        with get_public_session() as pub_db:
+        with get_public_db() as pub_db:
             ensure_fts5(pub_db)
     except Exception as e:
         logging.getLogger("refinet").warning(f"FTS5 init skipped: {e}")
+
+    # ── Initialize model gateway (multi-provider inference) ─────
+    try:
+        from api.services.gateway import ModelGateway
+        await ModelGateway.get().initialize()
+    except Exception as e:
+        logging.getLogger("refinet").warning(f"Model gateway init: {e}")
 
     # ── Register event bus handlers ──────────────────────────────
     from api.services.event_bus import EventBus
@@ -106,8 +113,11 @@ async def lifespan(app: FastAPI):
     # Agent events — task completion, delegation → WS broadcast + webhook delivery
     bus.subscribe("agent.*", ws_manager.broadcast_event)
     bus.subscribe("agent.*", deliver_bus_event)
+    # Trigger router — maps events to agent tasks automatically
+    from api.services.trigger_router import register_all_triggers
+    register_all_triggers(bus)
     logging.getLogger("refinet").info(
-        "Event bus handlers registered (registry + messaging + system + knowledge + chain + agent → WS + webhooks)"
+        "Event bus handlers registered (registry + messaging + system + knowledge + chain + agent + trigger router → WS + webhooks)"
     )
 
     # ── Start SMTP bridge (if enabled) ───────────────────────────
@@ -134,9 +144,9 @@ async def lifespan(app: FastAPI):
     # No duplicate hardcoded loops needed.
     try:
         from api.services.scheduler import TaskScheduler, seed_default_tasks
-        from api.database import get_internal_session as _get_int_session
-        # Seed default scheduled tasks (p2p_cleanup, health_monitor, auth_cleanup, memory_cleanup)
-        with _get_int_session() as sched_db:
+        from api.database import get_internal_db as _get_int_db
+        # Seed default scheduled tasks (6 platform + 5 brain workers)
+        with _get_int_db() as sched_db:
             seed_default_tasks(sched_db)
         # Start the scheduler master loop (10s tick, checks due tasks)
         _scheduler_task = asyncio.create_task(TaskScheduler.get().start())
@@ -223,6 +233,8 @@ def create_app() -> FastAPI:
     app.include_router(webhooks_router)
     app.include_router(mcp_router)
     app.include_router(keys_router)
+    from api.routes.provider_keys import router as provider_keys_router
+    app.include_router(provider_keys_router)
     app.include_router(admin_router)
     app.include_router(knowledge_router)
 
@@ -244,7 +256,11 @@ def create_app() -> FastAPI:
     from api.routes.dapp import router as dapp_router
     app.include_router(dapp_router)
 
-    # ── App Store Routes ──────────────────────────────────────────
+    # ── Submission Review Pipeline (must be before app_store — has /apps prefix too) ──
+    from api.routes.submissions import router as submissions_router
+    app.include_router(submissions_router)
+
+    # ── App Store Routes (has {slug:path} catch-all — must be LAST /apps router) ──
     from api.routes.app_store import router as app_store_router
     app.include_router(app_store_router)
 

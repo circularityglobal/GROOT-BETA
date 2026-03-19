@@ -1,63 +1,145 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { ThemeProvider, useTheme } from '@/components/ThemeProvider'
+import ErrorBoundary from '@/components/ErrorBoundary'
 import { API_URL } from '@/lib/config'
 import GrootChatWidget from '@/components/GrootChat'
 import SettingsModal from '@/components/SettingsModal'
+import DocsModal from '@/components/DocsModal'
 
 // Wallet providers
 import { WagmiProvider } from 'wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { wagmiConfig } from '@/lib/wallet'
 
-// Singleton QueryClient (avoid re-creation on re-render)
-const queryClient = new QueryClient()
+// Singleton QueryClient — survives re-renders but not page reloads (which is correct)
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      staleTime: 30_000,
+      // Don't refetch on window focus during development to reduce noise
+      refetchOnWindowFocus: false,
+    },
+  },
+})
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [hydrated, setHydrated] = useState(false)
   const pathname = usePathname()
+  const mountedRef = useRef(false)
 
   useEffect(() => {
-    const token = localStorage.getItem('refinet_token')
-    setIsLoggedIn(!!token)
+    // Guard against double-mount in React StrictMode
+    if (mountedRef.current) return
+    mountedRef.current = true
+
+    // Clear stale wagmi connector state on fresh page load.
+    // This prevents crashes when connectors change between page loads
+    // (e.g., WalletConnect added/removed, connector IDs changed).
+    try {
+      const cookies = document.cookie.split(';')
+      for (const cookie of cookies) {
+        const name = cookie.split('=')[0].trim()
+        if (name === 'wagmi.store') {
+          // Parse the wagmi store cookie to check for stale state
+          const val = decodeURIComponent(cookie.split('=').slice(1).join('='))
+          try {
+            const state = JSON.parse(val)
+            // If the stored state references a connector that doesn't exist
+            // in the current config, clear it to prevent reconnection crashes
+            if (state?.state?.connections) {
+              const connectorIds = wagmiConfig.connectors.map(c => c.id)
+              const hasStaleConnector = Object.values(state.state.connections as Record<string, any>).some(
+                (conn: any) => conn?.connector?.id && !connectorIds.includes(conn.connector.id)
+              )
+              if (hasStaleConnector) {
+                document.cookie = 'wagmi.store=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/'
+                console.warn('[REFINET] Cleared stale wagmi connector state')
+              }
+            }
+          } catch {
+            // Malformed cookie — clear it
+            document.cookie = 'wagmi.store=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/'
+          }
+        }
+      }
+    } catch {
+      // Cookie access failed — not critical
+    }
+  }, [])
+
+  useEffect(() => {
+    const checkAuth = () => {
+      try {
+        const token = localStorage.getItem('refinet_token')
+        setIsLoggedIn(!!token)
+      } catch {
+        // localStorage blocked (incognito, storage full, etc.)
+        setIsLoggedIn(false)
+      }
+    }
+
+    checkAuth()
     setHydrated(true)
 
-    const onStorage = () => setIsLoggedIn(!!localStorage.getItem('refinet_token'))
+    const onStorage = () => checkAuth()
     window.addEventListener('storage', onStorage)
-
-    const onAuthChange = () => setIsLoggedIn(!!localStorage.getItem('refinet_token'))
-    window.addEventListener('refinet-auth-change', onAuthChange)
+    window.addEventListener('refinet-auth-change', onStorage)
 
     return () => {
       window.removeEventListener('storage', onStorage)
-      window.removeEventListener('refinet-auth-change', onAuthChange)
+      window.removeEventListener('refinet-auth-change', onStorage)
     }
   }, [])
 
   // Auth page (/settings/) gets full viewport — no nav, no padding
   const isAuthPage = pathname === '/settings' || pathname === '/settings/'
 
+  // Don't render anything until hydrated — prevents SSR/CSR mismatch flash
+  // that can cause layout thrash and component unmount/remount cycles
+  if (!hydrated) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: 'var(--bg-primary, #0a0a0f)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}>
+        <img
+          src="/refi-logo.png"
+          alt="Loading..."
+          style={{ width: 32, height: 32, borderRadius: '50%', opacity: 0.6, animation: 'pulse 1.5s ease-in-out infinite' }}
+          onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+        />
+      </div>
+    )
+  }
+
   return (
-    <WagmiProvider config={wagmiConfig}>
-      <QueryClientProvider client={queryClient}>
-        <ThemeProvider>
-          {hydrated && isLoggedIn ? (
-            <AppShell>{children}</AppShell>
-          ) : isAuthPage ? (
-            <>{children}</>
-          ) : (
-            <>
-              <PublicNavBar hydrated={hydrated} />
-              <main className="pt-[48px]">{children}</main>
-            </>
-          )}
-        </ThemeProvider>
-      </QueryClientProvider>
-    </WagmiProvider>
+    <ErrorBoundary>
+      <WagmiProvider config={wagmiConfig}>
+        <QueryClientProvider client={queryClient}>
+          <ThemeProvider>
+            {isLoggedIn ? (
+              <AppShell>{children}</AppShell>
+            ) : isAuthPage ? (
+              <>{children}</>
+            ) : (
+              <>
+                <PublicNavBar hydrated={hydrated} />
+                <main className="pt-[48px]">{children}</main>
+              </>
+            )}
+          </ThemeProvider>
+        </QueryClientProvider>
+      </WagmiProvider>
+    </ErrorBoundary>
   )
 }
 
@@ -68,6 +150,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [docsOpen, setDocsOpen] = useState(false)
 
   useEffect(() => {
     const saved = localStorage.getItem('refinet_sidebar_collapsed')
@@ -160,6 +243,12 @@ function AppShell({ children }: { children: React.ReactNode }) {
           <TopBarIcon href="/repo/" label="Repositories" active={isActive('/repo')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+            </svg>
+          </TopBarIcon>
+
+          <TopBarIcon href="/store/" label="App Store" active={isActive('/store')}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 2L3 7v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-3-5z"/><line x1="3" y1="7" x2="21" y2="7"/><path d="M16 11a4 4 0 0 1-8 0"/>
             </svg>
           </TopBarIcon>
 
@@ -305,8 +394,9 @@ function AppShell({ children }: { children: React.ReactNode }) {
 
             <SidebarItem href="/projects/" icon={<ProjectsIcon />} label="Projects" active={isActive('/projects')} collapsed={collapsed} />
             <SidebarItem href="/explore/" icon={<RegistryIcon />} label="Registry" active={isActive('/explore')} collapsed={collapsed} />
+            <SidebarItem href="/store/" icon={<StoreIcon />} label="App Store" active={isActive('/store')} collapsed={collapsed} />
             <SidebarItem href="/repo/" icon={<RepoIcon />} label="Repositories" active={isActive('/repo')} collapsed={collapsed} />
-            <SidebarItem href="/docs/" icon={<DocsIcon />} label="API Docs" active={isActive('/docs')} collapsed={collapsed} />
+            <SidebarButton icon={<DocsIcon />} label="API Docs" active={docsOpen} collapsed={collapsed} onClick={() => setDocsOpen(true)} />
           </nav>
 
           {/* Bottom section */}
@@ -326,6 +416,9 @@ function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Settings modal */}
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      {/* Docs modal (GitBook-style) */}
+      <DocsModal open={docsOpen} onClose={() => setDocsOpen(false)} />
     </div>
   )
 }
@@ -411,6 +504,47 @@ function SidebarItem({ href, icon, label, active, collapsed }: {
   )
 }
 
+/* ─── Sidebar Button (for modal triggers) ─── */
+function SidebarButton({ icon, label, active, collapsed, onClick }: {
+  icon: React.ReactNode; label: string; active: boolean; collapsed: boolean; onClick: () => void
+}) {
+  return (
+    <button
+      title={collapsed ? label : undefined}
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: collapsed ? '8px 0' : '7px 12px',
+        justifyContent: collapsed ? 'center' : 'flex-start',
+        borderRadius: 8,
+        fontSize: 13,
+        fontWeight: active ? 600 : 400,
+        color: active ? 'var(--refi-teal)' : 'var(--text-secondary)',
+        background: active ? 'var(--refi-teal-glow)' : 'transparent',
+        border: 'none',
+        cursor: 'pointer',
+        transition: 'all 0.15s ease',
+        marginBottom: 2,
+        width: '100%',
+        fontFamily: 'inherit',
+      }}
+      onMouseEnter={e => {
+        if (!active) { e.currentTarget.style.background = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-primary)' }
+      }}
+      onMouseLeave={e => {
+        if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)' }
+      }}
+    >
+      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, flexShrink: 0 }}>
+        {icon}
+      </span>
+      {!collapsed && <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>}
+    </button>
+  )
+}
+
 /* ─── Top Bar Icon Link (uses Next.js Link) ─── */
 function TopBarIcon({ href, label, active, children }: { href: string; label: string; active: boolean; children: React.ReactNode }) {
   return (
@@ -444,5 +578,6 @@ function KnowledgeIcon() { return <svg width="16" height="16" viewBox="0 0 24 24
 function ProjectsIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> }
 function RegistryIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg> }
 function RepoIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> }
+function StoreIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 7v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-3-5z"/><line x1="3" y1="7" x2="21" y2="7"/><path d="M16 11a4 4 0 0 1-8 0"/></svg> }
 function DocsIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> }
 function AdminIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> }

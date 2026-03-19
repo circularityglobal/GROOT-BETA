@@ -163,6 +163,30 @@ class ScriptExecution(InternalBase):
     duration_ms = Column(Integer, nullable=True)
 
 
+class SandboxEnvironment(InternalBase):
+    """
+    Isolated Docker sandbox for reviewing app submissions.
+    Network-isolated, time-limited, no platform access.
+    """
+    __tablename__ = "sandbox_environments"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    submission_id = Column(String, nullable=False, index=True)       # references public.app_submissions.id
+    status = Column(String, default="provisioning")                  # provisioning | ready | running | stopped | failed | destroyed
+    container_id = Column(String, nullable=True)                     # Docker container ID
+    container_name = Column(String, nullable=True)                   # Human-readable container name
+    image_tag = Column(String, nullable=True)                        # Docker image tag built for this sandbox
+    port = Column(Integer, nullable=True)                            # Host port mapped to container
+    access_url = Column(String, nullable=True)                       # URL admin can use to interact
+    network_isolated = Column(Boolean, default=True)                 # No external network access
+    resource_limits = Column(Text, nullable=True)                    # JSON: {cpu, memory_mb, disk_mb}
+    logs = Column(Text, nullable=True)                               # Build + runtime logs
+    created_by = Column(String, nullable=False)                      # Admin who provisioned it
+    created_at = Column(DateTime, server_default=func.now())
+    expires_at = Column(DateTime, nullable=True)                     # Auto-destroy after this time
+    destroyed_at = Column(DateTime, nullable=True)
+
+
 class WalletShare(InternalBase):
     """Individual AES-256-GCM encrypted Shamir share."""
     __tablename__ = "wallet_shares"

@@ -39,7 +39,7 @@ export default function GrootChatWidget() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          model: 'bitnet-b1.58-2b',
+          model: (typeof window !== 'undefined' && localStorage.getItem('refinet_preferred_model')) || 'bitnet-b1.58-2b',
           messages: updated.map(m => ({ role: m.role, content: m.content })),
           stream: true,
           max_tokens: 1024,

@@ -23,20 +23,25 @@ See the full specification in `docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md`.
 - Server: Oracle Cloud ARM A1 Flex (4 OCPUs, 24GB RAM, 200GB storage)
 
 **Platform Subsystems:**
-- AI Inference — OpenAI-compatible API with RAG + CAG context injection
+- AI Inference — OpenAI-compatible API with RAG + CAG context injection, multi-provider gateway
 - Agent Engine — Autonomous multi-agent platform with SOUL identity, 4-tier memory, 6-phase cognitive loop, tool access, and delegation
+- Context Assembly — 7-layer injection stack with token budget tracking (SOUL, agent, memory, RAG, skills, safety, runtime)
+- Trigger Router — Unified event→agent task routing from 5 sources (heartbeat, cron, webhook, chain, messenger)
+- Output Router — Multi-target task result routing (DB, response, memory, agent chaining, webhook)
 - Smart Contract Registry — GitHub-style project management with ABI parsing and SDK generation
 - GROOT Brain — Per-user contract repository with source code privacy
 - DApp Factory — Template-based DApp assembly from registry contracts (token-dashboard, nft-gallery, staking-ui, dao-voter, multi-send)
-- App Store — Publish and discover DApps, agents, tools, and templates
-- Chain Listener — On-chain event monitoring with webhook-triggered backend actions
+- App Store — Publish and discover DApps, agents, tools, and templates with sandbox review pipeline
+- Chain Listener — On-chain event monitoring with automatic agent task creation
 - Wallet Identity — Multi-chain identity with ENS resolution and pseudo-IPv6 addressing
 - Messaging — Wallet-to-wallet DMs, groups, email bridge (SMTP), messenger bridge, typing indicators
 - P2P Network — Presence tracking, gossip-based peer discovery, relay infrastructure
 - Knowledge Base — Multi-format document ingestion, auto-tagging, comparison, timeline extraction, FTS5 full-text indexing
 - Device & Agent Connectivity — IoT/PLC/DLT registration, telemetry, remote config
-- Task Scheduler — Health monitoring, cleanup, memory expiry, configurable scheduled tasks
+- Task Scheduler — Health monitoring, cleanup, memory expiry, 13 configurable scheduled tasks
 - Script Runner — Safe script execution with category-based access control (ops, maintenance, analysis, chain, dapp)
+- JSONL Logger — File-based episodic audit trail alongside DB storage
+- Configuration — YAML hierarchy (default → production → ENV) with dot-notation access
 - Admin Panel — Role management, secrets vault, audit log, system config, MCP registry
 
 **Cardinal Rules:**
@@ -49,9 +54,11 @@ See the full specification in `docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md`.
 7. Chain watchers may detect events but NEVER initiate state-changing transactions autonomously
 
 **Scale:**
-- 22 route files, 210+ API endpoints
+- 25 route files, 210+ API endpoints
 - 50+ database tables (public + internal)
-- 42 service modules, 10 auth modules
-- 10 migration files, 7 middleware modules
-- 10 test files, 23 operational scripts
-- 17 frontend pages, 7 documentation files
+- 64 service modules, 12 auth modules
+- 9 migration files, 6 middleware modules
+- 10 test files, 29 operational scripts
+- 16 frontend pages, 17 components, 10 documentation files
+- 5 root control documents (SOUL, SAFETY, MEMORY, HEARTBEAT, AGENTS)
+- 4 skills, 2 YAML config files, JSONL audit logging

@@ -4,9 +4,13 @@
 
 REFINET Cloud is the sovereign cloud infrastructure for the Regenerative Finance Network. It provides free, OpenAI-compatible AI inference powered by BitNet, a multi-agent autonomous engine, a GitHub-style smart contract registry, DApp factory, app store, wallet-to-wallet encrypted messaging, multi-chain identity management, on-chain event automation, IoT device connectivity, and a 6-protocol MCP gateway — all running on permanently free infrastructure with zero recurring costs.
 
+**New developer?** Start with [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) for quickstart and onboarding. For architecture deep dive, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## What is Groot?
 
-Groot is the AI that lives in REFINET Cloud. Talk to it at `app.refinet.io`. It runs on BitNet b1.58 2B4T — a 1-bit open-source LLM that runs natively on CPU. No GPU required. No subscription. No vendor lock-in.
+Groot is the AI that lives in REFINET Cloud. Talk to it at `app.refinet.io`. By default it runs on BitNet b1.58 2B4T — a 1-bit open-source LLM that runs natively on CPU. No GPU required. No subscription. No vendor lock-in.
+
+Groot also connects to **any AI provider** through the Universal Model Gateway: Google Gemini (free tier), Ollama, LM Studio, OpenRouter, and user-provided keys for OpenAI, Anthropic, Groq, Mistral, Replicate, Stability AI, Together AI, Perplexity, and more. Switch models in the chat header or bring your own API keys in Settings.
 
 Groot is augmented with two knowledge systems:
 - **RAG** (Retrieval-Augmented Generation) — searches a curated knowledge base of documents, PDFs, spreadsheets, and markdown before every response
@@ -14,19 +18,28 @@ Groot is augmented with two knowledge systems:
 
 ## Platform Features
 
-### AI Inference
+### AI Inference (Multi-Provider)
 - OpenAI-compatible API (`POST /v1/chat/completions`)
-- Streaming SSE responses
-- RAG + CAG context injection
+- Universal Model Gateway: BitNet (sovereign), Gemini, Ollama, LM Studio, OpenRouter
+- BYOK (Bring Your Own Key): Connect OpenAI, Anthropic, Groq, Mistral, Replicate, Stability, Together, Perplexity, or any OpenAI-compatible endpoint
+- Streaming SSE responses with provider-agnostic normalization
+- RAG + CAG context injection (works identically across all providers)
+- Google Search grounding for Gemini models
+- Automatic fallback chain when providers are unavailable
 - Anonymous access (25 req/day) and authenticated tiers (250+ req/day)
 
 ### Agent Engine
 - Autonomous multi-agent platform with persistent identity (SOUL.md)
 - 6-phase cognitive loop: PERCEIVE → PLAN → ACT → OBSERVE → REFLECT → STORE
+- 7-layer context injection stack with token budget tracking (SOUL, agent, memory, RAG, skills, safety, runtime)
 - 4-tier memory system: Working (TTL), Episodic (events), Semantic (facts + embeddings), Procedural (strategies)
+- Trigger router: automatic event→agent task routing from 5 sources (heartbeat, cron, webhook, chain, messenger)
+- Output router: multi-target result routing (DB, response, memory, agent chaining, webhook)
 - Tool access via MCP gateway with glob-pattern permissions
 - Agent-to-agent delegation with configurable policies (none/approve/auto)
-- Built-in archetypes: groot-chat, contract-analyst, knowledge-curator, platform-ops, dapp-builder
+- JSONL episodic audit trail alongside DB storage
+- 10 built-in archetypes: groot-chat, contract-analyst, knowledge-curator, platform-ops, dapp-builder, device-monitor, contract-watcher, onboarding, maintenance, orchestrator
+- YAML configuration hierarchy (default → production → ENV)
 
 ### Smart Contract Registry
 - GitHub-style project management (create, star, fork)
@@ -119,7 +132,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="bitnet-b1.58-2b",
+    model="bitnet-b1.58-2b",  # or "gemini-2.0-flash", "gpt-4o", "claude-sonnet-4-6", etc.
     messages=[{"role": "user", "content": "Hello, Groot"}]
 )
 ```
@@ -135,7 +148,8 @@ response = client.chat.completions.create(
 | `/agents/*` | 12+ | JWT or build key |
 | `/webhooks/*` | 5 | JWT |
 | `/mcp/*` | 3 | JWT |
-| `/keys/*` | 4 | JWT |
+| `/keys/*` | 5 | Full Auth (SIWE+Password+TOTP) |
+| `/provider-keys/*` | 6 | Full Auth (SIWE+Password+TOTP) |
 | `/knowledge/*` | 5+ | Admin (write), any (search) |
 | `/admin/*` | 14+ | Admin role |
 | `/registry/*` | 12+ | JWT |
@@ -173,8 +187,9 @@ Any device that can send HTTP POST requests can register, send telemetry, and re
 
 ### Data Protection
 - Dual-database architecture: `public.db` (user data) + `internal.db` (admin/secrets)
-- AES-256-GCM encryption for secrets, TOTP keys, and wallet shares
+- AES-256-GCM encryption for secrets, TOTP keys, wallet shares, and external provider keys
 - Custodial wallet keys split via Shamir Secret Sharing (5-of-3 threshold)
+- **BYOK Security Gate**: Creating API keys or saving external provider keys requires completion of all 3 auth layers (SIWE + Password + TOTP). Incomplete layers return HTTP 403 with specific guidance.
 - Append-only audit log — no delete or update routes exist
 - Unified protocol authentication across all 6 protocols
 
@@ -207,6 +222,8 @@ Any device that can send HTTP POST requests can register, send telemetry, and re
 | [docs/SOUL_FORMAT.md](docs/SOUL_FORMAT.md) | SOUL.md format specification — agent identity, goals, constraints, tools, delegation |
 | [docs/SAFETY.md](docs/SAFETY.md) | Platform-wide agent safety constraints — hard rules all agents must respect |
 | [docs/HEARTBEAT.md](docs/HEARTBEAT.md) | System heartbeat protocol — health checks, scheduled tasks, uptime tracking |
+| [docs/APP_STORE.md](docs/APP_STORE.md) | App Store submission pipeline — sandbox, review, approval |
+| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | Complete API reference — all endpoints, schemas, auth requirements, tested examples |
 
 ## Infrastructure
 

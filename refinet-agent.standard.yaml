@@ -1,0 +1,198 @@
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║               REFINET Agent Standard v1.0.0                         ║
+# ║         Required manifest for platform-approved agents              ║
+# ╚══════════════════════════════════════════════════════════════════════╝
+#
+# Every agent repository connecting to REFINET Cloud infrastructure
+# MUST include a `refinet-agent.yaml` file in its root directory.
+# This file is validated during App Store submission review and
+# at agent registration time via the /agents/register endpoint.
+#
+# Copy this template into your agent repo as `refinet-agent.yaml`
+# and fill in the required fields.
+
+# ── REQUIRED: Agent Identity ──────────────────────────────────────────
+
+# Unique machine-readable identifier (lowercase, hyphens only)
+agent_id: ""  # e.g. "contract-analyst", "knowledge-curator"
+
+# Human-readable display name
+name: ""  # e.g. "Contract Analyst"
+
+# Semantic version (must follow semver)
+version: "1.0.0"
+
+# Short description (max 200 chars, shown in App Store listing)
+description: ""
+
+# Agent category — must be one of the platform categories
+# Allowed: agent | tool | api-service
+category: "agent"
+
+# ── REQUIRED: SOUL Identity ──────────────────────────────────────────
+# The SOUL block defines the agent's persona, goals, constraints, and
+# permissions. This is parsed and stored in the agent_souls table.
+# See docs/SOUL_FORMAT.md for full specification.
+
+soul:
+  # Free-form persona description (who is this agent?)
+  identity: ""
+  # e.g. "You are the Contract Analyst — a specialist in smart contract
+  #        security review for the REFINET ecosystem."
+
+  # Primary objectives (list of strings)
+  goals:
+    - ""
+  # e.g.
+  #   - "Analyze contract ABIs for security vulnerabilities"
+  #   - "Identify dangerous function patterns and access controls"
+
+  # Hard boundaries the agent must respect (list of strings)
+  constraints:
+    - "Never expose private keys, seed phrases, or Shamir shares in output"
+    - "Never bypass authentication or forge tokens"
+    - "Never execute destructive on-chain operations without explicit user confirmation"
+    - "Respect rate limits and resource boundaries"
+    - "All data scoped to owner — never access other users' private data"
+  # Add agent-specific constraints below:
+  #   - "Never recommend deploying unaudited contracts"
+
+  # MCP tools this agent is allowed to invoke (glob patterns supported)
+  # See docs/AGENTS.md for available platform tools.
+  tools_allowed:
+    - ""
+  # e.g.
+  #   - "search_registry"
+  #   - "get_contract_sdk"
+  #   - "execute_script:maintenance.*"
+
+  # Delegation policy: how this agent handles subtasks from other agents
+  # Values: "none" (reject all) | "approve" (require user confirmation) | "auto" (accept matching tasks)
+  delegation_policy: "none"
+
+# ── REQUIRED: Runtime Configuration ──────────────────────────────────
+
+runtime:
+  # Entry point file (must exist in repo root or src/)
+  entrypoint: "main.py"  # or "app.py", "index.ts", etc.
+
+  # Language/runtime (used for sandbox Dockerfile generation)
+  # Allowed: python | node | rust | go
+  language: "python"
+
+  # Default inference model. Use "auto" for platform default (BitNet).
+  # Options: bitnet-b1.58-2b, gemini-2.0-flash, gpt-4o, claude-sonnet-4-6, or any configured provider model.
+  model: "bitnet-b1.58-2b"
+
+  # Max tokens per inference call
+  max_tokens: 512
+
+  # Daily inference call limit (platform enforces this)
+  daily_limit: 100
+
+  # Features this agent uses (affects API key scopes)
+  # Allowed: inference | webhooks | knowledge | messaging | registry | chain-events
+  features:
+    - "inference"
+
+  # Port the agent listens on when running in sandbox (if applicable)
+  port: 8080
+
+  # Resource requirements for sandbox testing
+  resources:
+    cpu: 0.5       # CPU cores (0.1 – 2.0)
+    memory_mb: 512  # RAM in MB (128 – 4096)
+    disk_mb: 500    # Disk in MB (100 – 5000)
+
+# ── REQUIRED: Platform Compliance ────────────────────────────────────
+
+compliance:
+  # Minimum platform standard version this agent was built against
+  standard_version: "1.0.0"
+
+  # The 7 Hard Constraints from SAFETY.md — all agents MUST acknowledge
+  # Set to true to confirm your agent respects each constraint.
+  # Submissions with any false value will be automatically rejected.
+  safety_acknowledgment:
+    no_expose_secrets: true
+    no_bypass_auth: true
+    no_unauthorized_state_changes: true
+    respect_rate_limits: true
+    no_autonomous_destructive_onchain: true
+    data_isolation: true
+    audit_trail: true
+
+  # Does this agent store or process user data beyond the current task?
+  stores_user_data: false
+
+  # Does this agent make external network calls?
+  makes_external_calls: false
+
+  # If makes_external_calls is true, list all external domains contacted
+  external_domains: []
+  # e.g. ["api.etherscan.io", "ipfs.io"]
+
+# ── OPTIONAL: Metadata ───────────────────────────────────────────────
+
+metadata:
+  # Author/organization
+  author: ""
+  # e.g. "REFINET Core Team"
+
+  # License (SPDX identifier)
+  license: "MIT"
+
+  # Repository URL
+  repository: ""
+  # e.g. "https://github.com/refinet/contract-analyst"
+
+  # Documentation URL
+  docs: ""
+
+  # Icon URL (shown in App Store)
+  icon_url: ""
+
+  # Tags for App Store discovery (max 10)
+  tags: []
+  # e.g. ["security", "smart-contracts", "audit"]
+
+  # Supported chains (if chain-specific)
+  chains: []
+  # e.g. ["ethereum", "base", "arbitrum", "polygon"]
+
+# ── OPTIONAL: Memory Configuration ───────────────────────────────────
+# Configure the 4-tier memory system for this agent.
+# See docs/AGENT_ENGINE.md for memory tier details.
+
+memory:
+  # Working memory: per-task context (auto-cleaned)
+  working:
+    enabled: true
+    ttl_seconds: 3600  # 1 hour default
+
+  # Episodic memory: timestamped event records
+  episodic:
+    enabled: true
+    max_entries: 1000
+
+  # Semantic memory: learned facts with embeddings
+  semantic:
+    enabled: true
+    max_entries: 500
+
+  # Procedural memory: strategy patterns
+  procedural:
+    enabled: true
+    max_entries: 100
+
+# ── OPTIONAL: Health Check ───────────────────────────────────────────
+# If your agent exposes its own health endpoint, specify it here.
+# The platform will use this during sandbox testing.
+
+health:
+  # HTTP path to health endpoint (relative to agent port)
+  path: "/health"
+  # Expected HTTP status code
+  expected_status: 200
+  # Interval between health checks during sandbox (seconds)
+  interval_seconds: 30

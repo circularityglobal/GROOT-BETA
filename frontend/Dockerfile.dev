@@ -1,0 +1,21 @@
+# REFINET Cloud — Frontend Development Dockerfile
+# For local development with docker-compose. NOT for production.
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install deps first (layer caching)
+COPY package.json package-lock.json* ./
+RUN npm install
+
+# Copy source (volumes override in dev, but needed for initial build)
+COPY . .
+
+EXPOSE 4000
+
+ENV PORT=4000
+ENV HOSTNAME=0.0.0.0
+
+# Default command (overridden by docker-compose)
+CMD ["npm", "run", "dev"]

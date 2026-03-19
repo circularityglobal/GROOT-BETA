@@ -130,11 +130,12 @@ class TaskScheduler:
 
     async def _tick(self):
         """Check all enabled tasks and fire those that are due."""
-        from api.database import get_internal_session
+        from api.database import get_internal_db
 
-        now = datetime.now(timezone.utc)
+        # Use naive UTC to match SQLite's naive datetime columns
+        now = datetime.utcnow()
 
-        with get_internal_session() as db:
+        with get_internal_db() as db:
             tasks = db.query(ScheduledTask).filter(
                 ScheduledTask.is_enabled == True,  # noqa: E712
             ).all()
@@ -212,8 +213,8 @@ class TaskScheduler:
     def _update_result(self, task_name: str, result: str, error: Optional[str]):
         """Update the last_result and last_error for a task."""
         try:
-            from api.database import get_internal_session
-            with get_internal_session() as db:
+            from api.database import get_internal_db
+            with get_internal_db() as db:
                 task = db.query(ScheduledTask).filter(
                     ScheduledTask.name == task_name,
                 ).first()
@@ -334,6 +335,50 @@ def seed_default_tasks(db: Session):
             "schedule": "86400",
             "handler_path": "api.services.scheduler.telemetry_prune_handler",
         },
+        # ── Brain Workers: deterministic I/O pipelines (no LLM dependency) ──
+        {
+            "name": "knowledge_sync",
+            "task_type": "interval",
+            "schedule": "300",
+            "handler_path": "api.services.workers.knowledge_sync_worker",
+        },
+        {
+            "name": "knowledge_gc",
+            "task_type": "interval",
+            "schedule": "3600",
+            "handler_path": "api.services.workers.knowledge_gc_worker",
+        },
+        {
+            "name": "chain_event_indexer",
+            "task_type": "interval",
+            "schedule": "60",
+            "handler_path": "api.services.workers.chain_event_indexer",
+        },
+        {
+            "name": "data_ttl",
+            "task_type": "interval",
+            "schedule": "3600",
+            "handler_path": "api.services.workers.data_ttl_worker",
+        },
+        {
+            "name": "capability_index",
+            "task_type": "interval",
+            "schedule": "600",
+            "handler_path": "api.services.workers.capability_index_worker",
+        },
+        # ── Model Gateway: provider health + dynamic model sync ──────
+        {
+            "name": "provider_health_check",
+            "task_type": "interval",
+            "schedule": "60",
+            "handler_path": "api.services.gateway.provider_health_check_handler",
+        },
+        {
+            "name": "provider_model_sync",
+            "task_type": "interval",
+            "schedule": "300",
+            "handler_path": "api.services.gateway.provider_model_sync_handler",
+        },
     ]
 
     for d in defaults:
@@ -351,9 +396,9 @@ def auth_cleanup_handler():
     """Cleanup expired SIWE nonces and refresh tokens."""
     from api.auth.siwe import cleanup_expired_nonces
     from api.auth.jwt import cleanup_expired_refresh_tokens
-    from api.database import get_public_session
+    from api.database import get_public_db
 
-    with get_public_session() as db:
+    with get_public_db() as db:
         nonces = cleanup_expired_nonces(db)
         tokens = cleanup_expired_refresh_tokens(db)
         db.commit()
@@ -364,9 +409,9 @@ def auth_cleanup_handler():
 def memory_cleanup_handler():
     """Cleanup expired working memory entries."""
     from api.services.agent_memory import cleanup_expired_working
-    from api.database import get_public_session
+    from api.database import get_public_db
 
-    with get_public_session() as db:
+    with get_public_db() as db:
         cleaned = cleanup_expired_working(db)
         db.commit()
         if cleaned:
@@ -387,9 +432,9 @@ def p2p_cleanup_handler():
 async def health_check_handler():
     """Run system health check and log results."""
     from api.services.monitor import run_health_check
-    from api.database import get_internal_session
+    from api.database import get_internal_db
 
-    with get_internal_session() as int_db:
+    with get_internal_db() as int_db:
         try:
             await run_health_check(int_db)
             int_db.commit()
@@ -399,12 +444,12 @@ async def health_check_handler():
 
 def api_counter_reset_handler():
     """Reset daily API key request counters. Should run once per day."""
-    from api.database import get_public_session
+    from api.database import get_public_db
     from api.models.public import ApiKey
     from datetime import date
 
     today = date.today()
-    with get_public_session() as db:
+    with get_public_db() as db:
         keys = db.query(ApiKey).filter(
             ApiKey.is_active == True,  # noqa: E712
         ).all()
@@ -425,12 +470,12 @@ def api_counter_reset_handler():
 
 def telemetry_prune_handler():
     """Prune old IoT telemetry records beyond 30-day retention window."""
-    from api.database import get_public_session
+    from api.database import get_public_db
     from api.models.public import IoTTelemetry
     from datetime import datetime, timedelta, timezone
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=30)
-    with get_public_session() as db:
+    with get_public_db() as db:
         old_count = db.query(IoTTelemetry).filter(
             IoTTelemetry.received_at < cutoff,
         ).count()

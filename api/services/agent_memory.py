@@ -103,7 +103,7 @@ def store_episode(
     outcome: str = "success",
     tokens_used: int = 0,
 ) -> AgentMemoryEpisodic:
-    """Store an episodic memory entry."""
+    """Store an episodic memory entry (DB + JSONL)."""
     entry = AgentMemoryEpisodic(
         agent_id=agent_id,
         event_type=event_type,
@@ -114,6 +114,23 @@ def store_episode(
     )
     db.add(entry)
     db.flush()
+
+    # Also append to JSONL file for audit trail
+    try:
+        from api.services.jsonl_logger import append_episode
+        task_id = context.get("task_id") if context else None
+        append_episode(
+            agent_id=agent_id,
+            event_type=event_type,
+            summary=summary,
+            context=context,
+            outcome=outcome,
+            tokens_used=tokens_used,
+            task_id=task_id,
+        )
+    except Exception:
+        pass  # JSONL logging is non-fatal
+
     return entry
 
 

@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { API_URL } from '@/lib/config'
+import ModelSelector from '@/components/ModelSelector'
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
@@ -56,7 +57,7 @@ const SUGGESTED_PROMPTS = [
 
 const INITIAL_MESSAGE: Message = {
   role: 'assistant',
-  content: 'I am Groot.\n\nI\'m the AI that lives in REFINET Cloud — powered by BitNet, running on sovereign infrastructure at zero cost. Ask me anything about REFINET, or just chat.\n\nSelect documents in the sidebar to scope my knowledge to specific sources.',
+  content: 'I am Groot.\n\nI\'m the AI that lives in REFINET Cloud — a sovereign gateway to multiple AI models. Switch providers using the model selector above: BitNet (sovereign), Gemini (Google), Ollama, LM Studio, or OpenRouter.\n\nSelect documents in the sidebar to scope my knowledge to specific sources. Enable Google Search grounding for web-enriched answers with Gemini models.',
 }
 
 /* ── Component ─────────────────────────────────────────────────── */
@@ -65,6 +66,16 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([INITIAL_MESSAGE])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
+  const [selectedModel, setSelectedModel] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('refinet_preferred_model') || 'bitnet-b1.58-2b'
+    }
+    return 'bitnet-b1.58-2b'
+  })
+  const [groundingEnabled, setGroundingEnabled] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('refinet_grounding') === 'true'
+    return false
+  })
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [savedConversations, setSavedConversations] = useState<SavedConversation[]>([])
@@ -188,7 +199,7 @@ export default function ChatPage() {
     try {
       const token = localStorage.getItem('refinet_token') || ''
       const body: any = {
-        model: 'bitnet-b1.58-2b',
+        model: selectedModel,
         messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
         stream: true,
         max_tokens: 512,
@@ -196,6 +207,10 @@ export default function ChatPage() {
       // Notebook mode: scope to selected documents
       if (selectedDocIds.size > 0) {
         body.notebook_doc_ids = Array.from(selectedDocIds)
+      }
+      // Gemini grounding (Google Search)
+      if (groundingEnabled && selectedModel.startsWith('gemini')) {
+        body.grounding = true
       }
 
       const response = await fetch(`${API_URL}/v1/chat/completions`, {
@@ -207,6 +222,7 @@ export default function ChatPage() {
       if (!response.ok) {
         const errText = response.status === 429 ? 'Rate limit reached. Create a free account for 250 requests/day.'
           : response.status === 401 ? 'Authentication required for full access.'
+          : response.status === 403 ? 'Security layers required. Complete email/password and 2FA setup in Settings to use this model with your own API key.'
           : `Error: ${response.status}`
         setMessages((prev) => { const u = [...prev]; u[u.length - 1] = { role: 'assistant', content: errText }; return u })
         setIsStreaming(false)
@@ -357,9 +373,20 @@ export default function ChatPage() {
                       <GenBtn label="FAQ" loading={generatingId === doc.id && generationType === 'generate-faq'} onClick={() => generateContent(doc.id, 'generate-faq')} />
                       <GenBtn label="Overview" loading={generatingId === doc.id && generationType === 'generate-overview'} onClick={() => generateContent(doc.id, 'generate-overview')} />
                       <GenBtn label="Timeline" loading={generatingId === doc.id && generationType === 'timeline'} onClick={() => generateContent(doc.id, 'timeline')} />
-                      <GenBtn label="Export MD" loading={false} onClick={() => {
+                      <GenBtn label="Export MD" loading={false} onClick={async () => {
                         const token = localStorage.getItem('refinet_token') || ''
-                        window.open(`${API_URL}/knowledge/my/documents/${doc.id}/export?format=md&token=${token}`, '_blank')
+                        try {
+                          const resp = await fetch(`${API_URL}/knowledge/my/documents/${doc.id}/export?format=md`, {
+                            headers: { Authorization: `Bearer ${token}` },
+                          })
+                          if (resp.ok) {
+                            const blob = await resp.blob()
+                            const url = URL.createObjectURL(blob)
+                            const a = document.createElement('a')
+                            a.href = url; a.download = `${doc.title || 'document'}.md`
+                            a.click(); URL.revokeObjectURL(url)
+                          }
+                        } catch {}
                       }} />
                     </div>
                   )}
@@ -444,9 +471,27 @@ export default function ChatPage() {
               </button>
             )}
             <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Groot</span>
-            <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: 'var(--refi-teal-glow)', color: 'var(--refi-teal)', fontFamily: "'JetBrains Mono', monospace" }}>
-              BitNet b1.58 2B4T &middot; CPU &middot; Sovereign
-            </span>
+            <ModelSelector
+              value={selectedModel}
+              onChange={(m) => { setSelectedModel(m); localStorage.setItem('refinet_preferred_model', m) }}
+            />
+            {/* Grounding toggle — only visible for Gemini models */}
+            {selectedModel.startsWith('gemini') && (
+              <button
+                onClick={() => setGroundingEnabled(!groundingEnabled)}
+                className="text-[10px] px-2 py-0.5 rounded flex items-center gap-1"
+                style={{
+                  background: groundingEnabled ? 'rgba(66,133,244,0.15)' : 'var(--bg-tertiary)',
+                  color: groundingEnabled ? '#4285F4' : 'var(--text-tertiary)',
+                  border: `1px solid ${groundingEnabled ? '#4285F430' : 'var(--border-subtle)'}`,
+                  cursor: 'pointer', fontFamily: "'JetBrains Mono', monospace",
+                  transition: 'all 0.15s',
+                }}
+              >
+                <span style={{ fontSize: '10px' }}>{groundingEnabled ? '\u2713' : '\u2716'}</span>
+                Search
+              </button>
+            )}
             {selectedDocIds.size > 0 && (
               <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: 'rgba(92,224,210,0.1)', color: 'var(--refi-teal)', fontFamily: "'JetBrains Mono', monospace" }}>
                 {selectedDocIds.size} source{selectedDocIds.size > 1 ? 's' : ''}
@@ -608,7 +653,7 @@ export default function ChatPage() {
           </div>
           <div className="mx-auto max-w-3xl mt-2 text-center">
             <span style={{ fontSize: '10px', color: 'var(--text-tertiary)', fontFamily: "'JetBrains Mono', monospace" }}>
-              Powered by BitNet &middot; Sovereign AI
+              Powered by {selectedModel} &middot; Sovereign AI
               {selectedDocIds.size > 0 ? ` · Notebook: ${selectedDocIds.size} sources` : ''}
             </span>
           </div>

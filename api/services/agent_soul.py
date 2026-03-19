@@ -1,7 +1,14 @@
 """
 REFINET Cloud — Agent Soul Service
 Parses SOUL.md format into structured identity data.
-Builds agent system prompts by combining SOUL with RAG context.
+Builds agent system prompts using the 7-layer context injection stack:
+  Layer 0: Root SOUL.md (always loaded)
+  Layer 1: Per-agent SOUL (from DB)
+  Layer 2: MEMORY.md + current memory state
+  Layer 3: RAG context (knowledge base + contracts)
+  Layer 4: Skills metadata (from skills/ directory)
+  Layer 5: SAFETY.md (always loaded — hard constraints)
+  Layer 6: Runtime context (datetime, model, tokens, tools)
 """
 
 import json
@@ -160,50 +167,61 @@ def delete_soul(db: Session, agent_id: str) -> bool:
     return True
 
 
-# ── System Prompt Builder ────────────────────────────────────────
+# ── System Prompt Builder — 7-Layer Context Injection Stack ─────
 
 def build_agent_system_prompt(
     db: Session,
-    agent_id: str,
+    agent_id: Optional[str],
     user_query: str,
     user_id: Optional[str] = None,
-) -> tuple[str, list[dict]]:
+    model: str = "bitnet-b1.58-2b",
+    memory_context: Optional[str] = None,
+) -> tuple[str, list[dict], dict]:
     """
-    Build a full system prompt for an agent by combining:
-    1. SOUL identity (persona, goals, constraints)
-    2. RAG context from knowledge base (scoped to user's visible docs)
+    Build a full system prompt using the 7-layer context injection stack.
 
-    Returns (system_prompt, sources_list).
+    When agent_id is None, builds the default GROOT chat prompt (root SOUL only).
+    When agent_id is provided, includes the per-agent SOUL from DB.
+
+    Returns (system_prompt, sources_list, token_report).
     """
-    soul = get_soul(db, agent_id)
+    from api.services.context_loader import load_control_document, load_skills_metadata
+    from api.services.token_budget import create_budget
 
-    # Build SOUL section
-    soul_parts = []
-    if soul:
-        if soul["persona"]:
-            soul_parts.append(f"## Your Identity\n{soul['persona']}")
-        if soul["goals"]:
-            goals_str = "\n".join(f"- {g}" for g in soul["goals"])
-            soul_parts.append(f"## Your Goals\n{goals_str}")
-        if soul["constraints"]:
-            constraints_str = "\n".join(f"- {c}" for c in soul["constraints"])
-            soul_parts.append(f"## Your Constraints\n{constraints_str}")
-        if soul["tools_allowed"]:
-            tools_str = ", ".join(soul["tools_allowed"])
-            soul_parts.append(f"## Available Tools\n{tools_str}")
+    budget = create_budget(model)
+    parts = []
+    sources = []
 
-    soul_section = "\n\n".join(soul_parts) if soul_parts else ""
+    # ── Layer 0: Root SOUL.md (always loaded) ────────────────────
+    root_soul = load_control_document("SOUL.md")
+    if root_soul:
+        root_soul = budget.allocate("soul", root_soul)
+        parts.append(root_soul)
 
-    # Get RAG context
-    from api.services.rag import build_rag_context
-    rag_context, sources = build_rag_context(db, user_query, user_id=user_id)
+    # ── Layer 1: Per-Agent SOUL (from DB) ────────────────────────
+    if agent_id:
+        soul = get_soul(db, agent_id)
+        agent_soul_parts = []
+        if soul:
+            if soul["persona"]:
+                agent_soul_parts.append(f"## Your Identity\n{soul['persona']}")
+            if soul["goals"]:
+                goals_str = "\n".join(f"- {g}" for g in soul["goals"])
+                agent_soul_parts.append(f"## Your Goals\n{goals_str}")
+            if soul["constraints"]:
+                constraints_str = "\n".join(f"- {c}" for c in soul["constraints"])
+                agent_soul_parts.append(f"## Your Constraints\n{constraints_str}")
+            if soul["tools_allowed"]:
+                tools_str = ", ".join(soul["tools_allowed"])
+                agent_soul_parts.append(f"## Available Tools\n{tools_str}")
 
-    # Assemble
-    parts = ["You are an autonomous AI agent running on REFINET Cloud."]
-    if soul_section:
-        parts.append(soul_section)
+        agent_soul_text = "\n\n".join(agent_soul_parts) if agent_soul_parts else ""
+        if agent_soul_text:
+            agent_soul_text = budget.allocate("agent_soul", agent_soul_text)
+            parts.append(agent_soul_text)
 
-    parts.append("""## Operating Protocol
+        # Add operating protocol for agent mode
+        parts.append("""## Operating Protocol
 You execute tasks through a structured cognitive loop:
 1. PERCEIVE — Understand the task and recall relevant memories
 2. PLAN — Create a structured step-by-step plan
@@ -216,11 +234,70 @@ When creating a plan, output valid JSON with this structure:
 {"steps": [{"action": "tool_name or reason", "args": {}, "expected": "description"}]}
 
 When reflecting, be honest about outcomes: "success", "partial", or "failure".""")
+    else:
+        budget.allocate("agent_soul", "")
+
+    # ── Layer 2: Memory State ────────────────────────────────────
+    if memory_context:
+        memory_text = budget.allocate("memory", f"## Your Memories\n{memory_context}")
+        if memory_text:
+            parts.append(memory_text)
+    else:
+        budget.allocate("memory", "")
+
+    # ── Layer 3: RAG Context ─────────────────────────────────────
+    from api.services.rag import build_rag_context
+    rag_context, rag_sources = build_rag_context(db, user_query, user_id=user_id)
+    sources = rag_sources
 
     if rag_context:
-        parts.append(f"\n## Reference Information\n{rag_context}")
+        rag_header = "Use the following reference information to inform your response. Cite it naturally — don't say \"according to the knowledge base.\""
+        rag_full = f"## Reference Information\n{rag_header}\n\n{rag_context}"
+        rag_text = budget.allocate("rag", rag_full)
+        if rag_text:
+            parts.append(rag_text)
+    else:
+        budget.allocate("rag", "")
 
-    return "\n\n".join(parts), sources
+    # ── Layer 4: Skills Metadata ─────────────────────────────────
+    skills_meta = load_skills_metadata()
+    if skills_meta:
+        skills_text = budget.allocate("skills", f"## {skills_meta}")
+        if skills_text:
+            parts.append(skills_text)
+    else:
+        budget.allocate("skills", "")
+
+    # ── Layer 5: SAFETY.md (always loaded) ───────────────────────
+    safety = load_control_document("SAFETY.md")
+    if safety:
+        safety_text = budget.allocate("safety", safety)
+        if safety_text:
+            parts.append(safety_text)
+
+    # ── Layer 6: Runtime Context ─────────────────────────────────
+    now = datetime.now(timezone.utc)
+    runtime = (
+        f"## Runtime\n"
+        f"- Date: {now.strftime('%Y-%m-%d %H:%M UTC')}\n"
+        f"- Model: {model}\n"
+        f"- Context window: {budget.context_window} tokens\n"
+        f"- Tokens remaining for response: {budget.remaining} tokens"
+    )
+    runtime_text = budget.allocate("runtime", runtime)
+    if runtime_text:
+        parts.append(runtime_text)
+
+    # ── Assemble ─────────────────────────────────────────────────
+    system_prompt = "\n\n".join(parts)
+    token_report = budget.report()
+
+    logger.debug(
+        f"Context assembled: {token_report['allocated']}/{token_report['total_usable']} tokens "
+        f"({len(parts)} layers)"
+    )
+
+    return system_prompt, sources, token_report
 
 
 def get_allowed_tools(db: Session, agent_id: str) -> list[str]:

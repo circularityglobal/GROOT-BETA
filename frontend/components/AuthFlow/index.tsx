@@ -36,7 +36,7 @@ const CHAIN_ICONS: Record<number, string> = {
   11155111: '⟠', // Sepolia
 }
 
-// Wallet brand colors
+// Wallet brand colors and icons
 const WALLET_BRANDS: Record<string, { color: string; icon: React.ReactNode }> = {
   metamask: {
     color: '#F6851B',
@@ -57,6 +57,42 @@ const WALLET_BRANDS: Record<string, { color: string; icon: React.ReactNode }> = 
       </svg>
     ),
   },
+  walletconnect: {
+    color: '#3B99FC',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <rect width="24" height="24" rx="6" fill="#3B99FC"/>
+        <path d="M7.2 9.6c2.6-2.6 6.9-2.6 9.5 0l.3.3a.3.3 0 010 .5l-1.1 1a.2.2 0 01-.2 0l-.5-.4a5 5 0 00-6.6 0l-.5.4a.2.2 0 01-.2 0l-1.1-1a.3.3 0 010-.5l.4-.3zm11.7 2.2l1 .9a.3.3 0 010 .5l-4.4 4.3a.4.4 0 01-.5 0l-3.1-3a.1.1 0 00-.1 0l-3.1 3a.4.4 0 01-.5 0L3.8 13.2a.3.3 0 010-.5l1-.9a.4.4 0 01.5 0l3.1 3a.1.1 0 00.1 0l3.1-3a.4.4 0 01.5 0l3.1 3a.1.1 0 00.1 0l3.1-3a.4.4 0 01.5 0z" fill="white"/>
+      </svg>
+    ),
+  },
+  dcent: {
+    color: '#00D4AA',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <rect width="24" height="24" rx="6" fill="#00D4AA"/>
+        <path d="M12 5a7 7 0 100 14 7 7 0 000-14zm0 2a1.5 1.5 0 110 3 1.5 1.5 0 010-3zm-3 5h6v1a3 3 0 01-6 0v-1z" fill="white"/>
+      </svg>
+    ),
+  },
+  trezor: {
+    color: '#14854F',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <rect width="24" height="24" rx="6" fill="#14854F"/>
+        <path d="M12 4l-6 3v5c0 4.4 2.6 8.5 6 10 3.4-1.5 6-5.6 6-10V7l-6-3zm0 2.5l4 2v4c0 3.3-1.8 6.4-4 7.5-2.2-1.1-4-4.2-4-7.5v-4l4-2z" fill="white"/>
+      </svg>
+    ),
+  },
+  ledger: {
+    color: '#000000',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <rect width="24" height="24" rx="6" fill="#000"/>
+        <path d="M5 5h5v14H5V5zm9 0h5v5h-5V5zm0 9h5v5h-5v-5z" fill="white"/>
+      </svg>
+    ),
+  },
   default: {
     color: 'var(--refi-teal)',
     icon: (
@@ -74,6 +110,10 @@ function getWalletBrand(connector: Connector) {
   const name = connector.name.toLowerCase()
   if (id.includes('metamask') || id === 'io.metamask' || name.includes('metamask')) return WALLET_BRANDS.metamask
   if (id.includes('coinbase') || name.includes('coinbase')) return WALLET_BRANDS.coinbase
+  if (id.includes('walletconnect') || name.includes('walletconnect')) return WALLET_BRANDS.walletconnect
+  if (id.includes('dcent') || name.includes("d'cent") || name.includes('dcent')) return WALLET_BRANDS.dcent
+  if (id.includes('trezor') || name.includes('trezor')) return WALLET_BRANDS.trezor
+  if (id.includes('ledger') || name.includes('ledger')) return WALLET_BRANDS.ledger
   return WALLET_BRANDS.default
 }
 
@@ -212,10 +252,9 @@ export default function AuthFlow({ onComplete }: { onComplete?: (token: string) 
     return true
   })
 
-  // Separate injected/known connectors
-  const walletConnectors = uniqueConnectors.filter(
-    (c) => c.id !== 'walletConnect' // Exclude WalletConnect entirely
-  )
+  // All connectors are available — WalletConnect is now supported for
+  // mobile wallets, hardware wallets (DCENT, Trezor, Ledger), and QR code scanning
+  const walletConnectors = uniqueConnectors
 
   const mainnetChains = supportedChainsList.filter((c) => !c.is_testnet)
   const testnetChains = supportedChainsList.filter((c) => c.is_testnet)
@@ -336,7 +375,10 @@ export default function AuthFlow({ onComplete }: { onComplete?: (token: string) 
                       <div className="auth-wallet-info">
                         <span className="auth-wallet-name">{displayName}</span>
                         <span className="auth-wallet-detail">
-                          {connector.id === 'injected' ? 'Browser extension' : 'Direct connection'}
+                          {connector.id === 'injected' ? 'Browser extension' :
+                           connector.id.includes('walletConnect') ? 'QR code · Mobile · Hardware wallets' :
+                           connector.id.includes('coinbase') ? 'Extension & mobile app' :
+                           'Direct connection'}
                         </span>
                       </div>
                       <div className="auth-wallet-arrow">

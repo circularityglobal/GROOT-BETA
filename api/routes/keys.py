@@ -1,28 +1,25 @@
-"""REFINET Cloud — API Key Routes"""
+"""
+REFINET Cloud — API Key Routes
+
+SECURITY: Creating and managing API keys requires full 3-layer auth:
+  Layer 3: SIWE (wallet)
+  Layer 1: Email + Password
+  Layer 2: TOTP (2FA)
+
+Read-only operations (list, usage) require basic auth only.
+"""
 
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from api.database import public_db_dependency
-from api.auth.jwt import decode_access_token, verify_scope, SCOPE_KEYS_WRITE
+from api.auth.jwt import SCOPE_KEYS_WRITE
 from api.auth.api_keys import create_api_key, revoke_api_key
+from api.auth.enforce import require_full_auth, require_authenticated
 from api.models.public import ApiKey, UsageRecord
 
 router = APIRouter(prefix="/keys", tags=["keys"])
-
-
-def _get_user_id(request: Request) -> str:
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing token")
-    try:
-        payload = decode_access_token(auth_header[7:])
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    if not verify_scope(payload, SCOPE_KEYS_WRITE):
-        raise HTTPException(status_code=403, detail="Requires keys:write scope")
-    return payload["sub"]
 
 
 @router.post("")
@@ -31,7 +28,8 @@ def create_key(
     request: Request,
     db: Session = Depends(public_db_dependency),
 ):
-    user_id = _get_user_id(request)
+    """Create a new API key. Requires SIWE + Email/Password + TOTP."""
+    user_id, _ = require_full_auth(request, db, scope=SCOPE_KEYS_WRITE)
     raw_key, record = create_api_key(
         db, user_id,
         name=body.get("name", "default"),
@@ -51,7 +49,8 @@ def create_key(
 
 @router.get("")
 def list_keys(request: Request, db: Session = Depends(public_db_dependency)):
-    user_id = _get_user_id(request)
+    """List active API keys. Requires full 3-layer auth."""
+    user_id, _ = require_full_auth(request, db, scope=SCOPE_KEYS_WRITE)
     keys = db.query(ApiKey).filter(
         ApiKey.user_id == user_id,
         ApiKey.is_active == True,  # noqa: E712
@@ -77,7 +76,8 @@ def delete_key(
     request: Request,
     db: Session = Depends(public_db_dependency),
 ):
-    user_id = _get_user_id(request)
+    """Revoke an API key. Requires full 3-layer auth."""
+    user_id, _ = require_full_auth(request, db, scope=SCOPE_KEYS_WRITE)
     if not revoke_api_key(db, key_id, user_id):
         raise HTTPException(status_code=404, detail="Key not found")
     return {"message": "Key revoked"}
@@ -85,8 +85,8 @@ def delete_key(
 
 @router.get("/activity")
 def recent_activity(request: Request, db: Session = Depends(public_db_dependency)):
-    """Get the last 5 usage records for the current user."""
-    user_id = _get_user_id(request)
+    """Get last 5 usage records. Basic auth only (read-only)."""
+    user_id, _ = require_authenticated(request, db)
     records = db.query(UsageRecord).filter(
         UsageRecord.user_id == user_id,
     ).order_by(UsageRecord.created_at.desc()).limit(5).all()
@@ -94,7 +94,10 @@ def recent_activity(request: Request, db: Session = Depends(public_db_dependency
         {
             "id": r.id,
             "endpoint": r.endpoint,
-            "tokens_used": r.tokens_used,
+            "model": r.model,
+            "provider": r.provider,
+            "prompt_tokens": r.prompt_tokens,
+            "completion_tokens": r.completion_tokens,
             "latency_ms": r.latency_ms,
             "created_at": str(r.created_at),
         }
@@ -108,7 +111,8 @@ def key_usage(
     request: Request,
     db: Session = Depends(public_db_dependency),
 ):
-    user_id = _get_user_id(request)
+    """Check key usage. Basic auth only (read-only)."""
+    user_id, _ = require_authenticated(request, db)
     key = db.query(ApiKey).filter(
         ApiKey.id == key_id,
         ApiKey.user_id == user_id,

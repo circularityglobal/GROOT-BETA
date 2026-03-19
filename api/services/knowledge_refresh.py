@@ -36,9 +36,9 @@ async def on_knowledge_change(event: str, data: dict):
         if new_vis == "public":
             logger.info(f"Document {doc_id} now public — triggering embedding backfill")
             try:
-                from api.database import get_public_session
+                from api.database import get_public_db
                 from api.services.rag import backfill_embeddings
-                with get_public_session() as db:
+                with get_public_db() as db:
                     updated = backfill_embeddings(db, batch_size=50)
                     if updated > 0:
                         db.commit()

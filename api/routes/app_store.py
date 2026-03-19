@@ -1,6 +1,6 @@
 """
 REFINET Cloud — App Store Routes
-Browse, publish, install, and review apps.
+Browse, publish, install, review, migrate assets, and manage apps.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -13,6 +13,7 @@ from api.services.app_store import (
     publish_app, search_apps, get_app_by_slug,
     install_app, uninstall_app, review_app,
     get_featured, get_user_installs,
+    migrate_dapp_to_store, migrate_agent_to_store, migrate_registry_to_store,
 )
 
 router = APIRouter(prefix="/apps", tags=["app-store"])
@@ -55,6 +56,7 @@ def browse_apps(
     query: str = None,
     category: str = None,
     chain: str = None,
+    price_type: str = None,
     sort_by: str = "installs",
     page: int = 1,
     page_size: int = 20,
@@ -69,6 +71,7 @@ def browse_apps(
         query=query,
         category=category,
         chain=chain,
+        price_type=price_type,
         sort_by=sort_by,
         page=page,
         page_size=page_size,
@@ -86,6 +89,17 @@ def featured_apps(
     return get_featured(db, limit=limit)
 
 
+@router.get("/categories")
+def list_categories():
+    """List all available app categories."""
+    from api.services.app_store import VALID_CATEGORIES, VALID_PRICE_TYPES, VALID_LICENSE_TYPES
+    return {
+        "categories": list(VALID_CATEGORIES),
+        "price_types": list(VALID_PRICE_TYPES),
+        "license_types": list(VALID_LICENSE_TYPES),
+    }
+
+
 @router.get("/installed")
 def my_installed_apps(
     request: Request,
@@ -94,18 +108,6 @@ def my_installed_apps(
     """Get apps installed by the authenticated user."""
     user_id = _get_user_id(request, db)
     return get_user_installs(db, user_id)
-
-
-@router.get("/{slug:path}")
-def get_app_detail(
-    slug: str,
-    db: Session = Depends(public_db_dependency),
-):
-    """Get full app details including readme and reviews."""
-    result = get_app_by_slug(db, slug)
-    if not result:
-        raise HTTPException(status_code=404, detail="App not found")
-    return result
 
 
 # ── Publish (auth required) ──────────────────────────────────────
@@ -141,6 +143,13 @@ def publish_app_route(
         registry_project_id=body.get("registry_project_id"),
         dapp_build_id=body.get("dapp_build_id"),
         agent_id=body.get("agent_id"),
+        price_type=body.get("price_type", "free"),
+        price_amount=float(body.get("price_amount", 0)),
+        price_token=body.get("price_token"),
+        price_token_amount=float(body["price_token_amount"]) if body.get("price_token_amount") else None,
+        license_type=body.get("license_type", "open"),
+        download_url=body.get("download_url"),
+        external_url=body.get("external_url"),
     )
 
     if "error" in result:
@@ -149,7 +158,111 @@ def publish_app_route(
     return result
 
 
-# ── Install / Uninstall (auth required) ──────────────────────────
+# ── Migration Routes (auth required) ─────────────────────────────
+# NOTE: These must be defined BEFORE the {slug:path} catch-all routes
+# to prevent FastAPI from matching them as slugs.
+
+@router.post("/migrate/dapp")
+def migrate_dapp_route(
+    body: dict,
+    request: Request,
+    db: Session = Depends(public_db_dependency),
+):
+    """Migrate an existing DApp build to the App Store."""
+    user_id = _get_user_id(request, db)
+
+    dapp_build_id = body.get("dapp_build_id")
+    if not dapp_build_id:
+        raise HTTPException(status_code=400, detail="'dapp_build_id' is required")
+
+    result = migrate_dapp_to_store(
+        db,
+        dapp_build_id=dapp_build_id,
+        owner_id=user_id,
+        name=body.get("name"),
+        description=body.get("description", ""),
+        price_type=body.get("price_type", "free"),
+        price_amount=float(body.get("price_amount", 0)),
+        tags=body.get("tags"),
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@router.post("/migrate/agent")
+def migrate_agent_route(
+    body: dict,
+    request: Request,
+    db: Session = Depends(public_db_dependency),
+):
+    """Migrate an existing agent to the App Store."""
+    user_id = _get_user_id(request, db)
+
+    agent_id = body.get("agent_id")
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="'agent_id' is required")
+
+    result = migrate_agent_to_store(
+        db,
+        agent_id=agent_id,
+        owner_id=user_id,
+        name=body.get("name"),
+        description=body.get("description", ""),
+        price_type=body.get("price_type", "free"),
+        price_amount=float(body.get("price_amount", 0)),
+        tags=body.get("tags"),
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@router.post("/migrate/registry")
+def migrate_registry_route(
+    body: dict,
+    request: Request,
+    db: Session = Depends(public_db_dependency),
+):
+    """Migrate a registry project to the App Store."""
+    user_id = _get_user_id(request, db)
+
+    registry_project_id = body.get("registry_project_id")
+    if not registry_project_id:
+        raise HTTPException(status_code=400, detail="'registry_project_id' is required")
+
+    result = migrate_registry_to_store(
+        db,
+        registry_project_id=registry_project_id,
+        owner_id=user_id,
+        name=body.get("name"),
+        description=body.get("description", ""),
+        category=body.get("category", "tool"),
+        price_type=body.get("price_type", "free"),
+        price_amount=float(body.get("price_amount", 0)),
+        tags=body.get("tags"),
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+# ── Slug-based routes (catch-all — must be LAST) ─────────────────
+
+@router.get("/{slug:path}")
+def get_app_detail(
+    slug: str,
+    db: Session = Depends(public_db_dependency),
+):
+    """Get full app details including readme and reviews."""
+    result = get_app_by_slug(db, slug)
+    if not result:
+        raise HTTPException(status_code=404, detail="App not found")
+    return result
+
 
 @router.post("/{slug:path}/install")
 def install_app_route(
@@ -190,8 +303,6 @@ def uninstall_app_route(
         raise HTTPException(status_code=400, detail=result["error"])
     return result
 
-
-# ── Review (auth required) ───────────────────────────────────────
 
 @router.post("/{slug:path}/review")
 def review_app_route(

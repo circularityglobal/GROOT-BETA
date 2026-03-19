@@ -19,6 +19,8 @@ from api.schemas.agent_engine import (
     SoulCreateRequest, TaskSubmitRequest, DelegationRequest,
 )
 
+from api.services.agent_standard import validate_agent_manifest, manifest_to_soul_md
+
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
@@ -68,6 +70,93 @@ def register_agent(
     return {
         "agent_id": agent.id,
         "config": json.loads(agent.config),
+    }
+
+
+@router.post("/validate-manifest")
+def validate_manifest(
+    request: Request,
+    body: dict,
+    db: Session = Depends(public_db_dependency),
+):
+    """
+    Validate a refinet-agent.yaml manifest against the REFINET Agent Standard.
+    Accepts {"manifest": "<yaml string>"} and returns validation results.
+    Used by CI pipelines and developers before submission.
+    """
+    _get_user_id(request, db)  # Must be authenticated
+
+    manifest_content = body.get("manifest", "")
+    if not manifest_content:
+        raise HTTPException(status_code=400, detail="Missing 'manifest' field with YAML content")
+
+    result = validate_agent_manifest(manifest_content)
+    return result
+
+
+@router.post("/register-with-manifest")
+def register_agent_with_manifest(
+    request: Request,
+    body: dict,
+    db: Session = Depends(public_db_dependency),
+):
+    """
+    Register an agent using a refinet-agent.yaml manifest.
+    Validates the manifest, creates the agent registration, and auto-creates
+    the SOUL identity from the manifest's soul section.
+    """
+    user_id = _get_user_id(request, db)
+
+    manifest_content = body.get("manifest", "")
+    if not manifest_content:
+        raise HTTPException(status_code=400, detail="Missing 'manifest' field with YAML content")
+
+    validation = validate_agent_manifest(manifest_content)
+    if not validation["valid"]:
+        raise HTTPException(status_code=422, detail={
+            "message": "Manifest validation failed",
+            "errors": validation["errors"],
+            "warnings": validation["warnings"],
+        })
+
+    manifest = validation["parsed"]
+    runtime = manifest.get("runtime", {})
+
+    # Create agent registration
+    agent = AgentRegistration(
+        id=f"ag_{uuid.uuid4().hex[:16]}",
+        user_id=user_id,
+        name=manifest["name"],
+        product=manifest.get("category", "agent"),
+        eth_address=body.get("eth_address"),
+        version=manifest.get("version", "1.0.0"),
+        config=json.dumps({
+            "model": runtime.get("model", "bitnet-b1.58-2b"),
+            "max_tokens": runtime.get("max_tokens", 512),
+            "daily_limit": runtime.get("daily_limit", 100),
+            "features_enabled": runtime.get("features", ["inference"]),
+            "entrypoint": runtime.get("entrypoint", "main.py"),
+            "language": runtime.get("language", "python"),
+            "resources": runtime.get("resources", {}),
+            "standard_version": manifest.get("compliance", {}).get("standard_version", "1.0.0"),
+        }),
+        last_connected_at=datetime.now(timezone.utc),
+    )
+    db.add(agent)
+    db.flush()
+
+    # Auto-create SOUL from manifest
+    soul_md = manifest_to_soul_md(manifest)
+    from api.services.agent_soul import create_soul
+    soul = create_soul(db, agent.id, soul_md)
+
+    return {
+        "agent_id": agent.id,
+        "name": agent.name,
+        "soul_id": soul.id,
+        "config": json.loads(agent.config),
+        "warnings": validation["warnings"],
+        "message": "Agent registered with REFINET Agent Standard manifest",
     }
 
 

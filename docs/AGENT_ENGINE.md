@@ -78,6 +78,76 @@ Agents access platform capabilities through the MCP gateway. Available tools:
 
 Tool access is controlled per-agent via `AgentSoul.tools_allowed` with glob pattern support.
 
+## 7-Layer Context Injection Stack
+
+Every inference call (both public chat and agent tasks) passes through a context assembly pipeline that injects 7 layers into the system prompt. Each layer is tracked by a token budget tracker to stay within BitNet's 2,048-token context window.
+
+**Implementation:** `api/services/agent_soul.py` → `build_agent_system_prompt()`
+
+| Layer | Content | Budget | Source |
+|---|---|---|---|
+| 0 | Root `SOUL.md` — GROOT identity | 300 tokens | `context_loader.py` |
+| 1 | Per-agent SOUL (persona, goals, constraints, tools) | 200 tokens | DB: `agent_souls` |
+| 2 | Memory state (working memory + recent episodes) | 100 tokens | `agent_memory.py` |
+| 3 | RAG context (knowledge chunks + contract SDKs) | 400 tokens | `rag.py` |
+| 4 | Skills metadata (available skill summaries) | 50 tokens | `skills/*/SKILL.md` |
+| 5 | `SAFETY.md` — hard constraints | 150 tokens | `context_loader.py` |
+| 6 | Runtime (datetime, model, tokens remaining) | 50 tokens | Built at call time |
+
+Total usable: 1,536 tokens (2,048 - 512 reserved for completion). Flexible layers (RAG, memory, skills) truncate first when over budget. Guaranteed layers (SOUL, SAFETY, agent SOUL, runtime) are never truncated.
+
+When `agent_id=None`, the pipeline builds the default GROOT chat prompt (Layer 0 + Layers 3-6, no per-agent SOUL or operating protocol).
+
+## Trigger Router
+
+Events from 5 sources are automatically routed to agent tasks.
+
+**Implementation:** `api/services/trigger_router.py`
+
+| Event Pattern | Target Agent |
+|---|---|
+| `device.telemetry.*` | device-monitor |
+| `chain.event.*` | contract-watcher |
+| `knowledge.document.*` | knowledge-curator |
+| `agent.task.completed` | orchestrator |
+| `system.health.*` | maintenance |
+
+Rate limited: max 1 auto-triggered task per agent per 10 seconds. Tasks run their cognitive loop in the background via `asyncio.create_task()`.
+
+The trigger router subscribes to EventBus patterns on application startup (registered in `api/main.py` lifespan).
+
+## Output Router
+
+After the cognitive loop completes, results are routed to configured output targets.
+
+**Implementation:** `api/services/output_router.py`
+
+| Target | Description |
+|---|---|
+| `json_store` | Persist to task.result_json (default, always) |
+| `response` | Return to API caller (default, always) |
+| `memory` | Write to episodic/semantic memory (default, STORE phase) |
+| `agent` | Forward result as a new task to another agent (delegation chaining) |
+| `webhook` | Publish custom event to EventBus → webhook delivery |
+
+Configure per-agent output targets in the agent registration's `config` JSON:
+```json
+{"output_targets": [{"type": "agent", "target_agent_id": "agent_xyz"}]}
+```
+
+## JSONL Episodic Logging
+
+In addition to DB-backed episodic memory, events are written to JSONL files for external audit.
+
+**Implementation:** `api/services/jsonl_logger.py`
+
+Files written to `data/episodes/{YYYY-MM-DD}/`:
+- `{agent_id}.jsonl` — Episodic events per agent
+- `tasks.jsonl` — Completed task records
+- `tool_calls.jsonl` — Tool call audit trail
+
+JSONL logging is non-fatal — failures are silently caught and never block DB writes.
+
 ## Database Tables
 
 All agent engine tables are in `public.db`:

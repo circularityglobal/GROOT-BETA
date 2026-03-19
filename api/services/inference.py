@@ -1,14 +1,15 @@
 """
-REFINET Cloud — Inference Service
-Calls the local bitnet.cpp llama-server over HTTP.
-Supports both blocking and streaming (SSE) responses.
+REFINET Cloud — Inference Service (Backward-Compatibility Shim)
+Delegates to ModelGateway → BitNetProvider.
+Existing code that imports call_bitnet/stream_bitnet continues to work.
 """
 
-import json
-import httpx
-from typing import AsyncGenerator
+from __future__ import annotations
 
-from api.config import get_settings
+from typing import AsyncGenerator, Optional
+
+# Re-export StreamResult from the providers layer for backward compatibility
+from api.services.providers.base import StreamResult
 
 
 async def call_bitnet(
@@ -18,41 +19,22 @@ async def call_bitnet(
     top_p: float = 1.0,
 ) -> dict:
     """
-    Non-streaming inference call to bitnet.cpp llama-server.
+    Non-streaming inference — delegates to ModelGateway.
     Returns {"content": str, "prompt_tokens": int, "completion_tokens": int}.
     """
-    settings = get_settings()
-
-    # Build prompt from messages (llama-server uses /completion endpoint)
-    prompt = _messages_to_prompt(messages)
-
-    payload = {
-        "prompt": prompt,
-        "n_predict": max_tokens,
-        "temperature": temperature,
-        "top_p": top_p,
-        "stop": ["</s>", "<|end|>", "<|user|>"],
-        "stream": False,
+    from api.services.gateway import ModelGateway
+    result = await ModelGateway.get().complete(
+        messages=messages,
+        model="bitnet-b1.58-2b",
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
+    )
+    return {
+        "content": result.content,
+        "prompt_tokens": result.prompt_tokens,
+        "completion_tokens": result.completion_tokens,
     }
-
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(
-                f"{settings.bitnet_host}/completion",
-                json=payload,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-            return {
-                "content": data.get("content", ""),
-                "prompt_tokens": data.get("tokens_evaluated", 0),
-                "completion_tokens": data.get("tokens_predicted", 0),
-            }
-    except httpx.TimeoutException:
-        return {"content": "Inference timed out. Please try again.", "prompt_tokens": 0, "completion_tokens": 0}
-    except Exception as e:
-        return {"content": f"Inference error: {str(e)}", "prompt_tokens": 0, "completion_tokens": 0}
 
 
 async def stream_bitnet(
@@ -60,62 +42,29 @@ async def stream_bitnet(
     temperature: float = 0.7,
     max_tokens: int = 512,
     top_p: float = 1.0,
+    result: Optional[StreamResult] = None,
 ) -> AsyncGenerator[str, None]:
     """
-    Streaming inference — yields tokens one at a time from bitnet.cpp.
+    Streaming inference — delegates to ModelGateway.
+    Yields tokens one at a time. Populates StreamResult if provided.
     """
-    settings = get_settings()
+    from api.services.gateway import ModelGateway
+    async for chunk in ModelGateway.get().stream(
+        messages=messages,
+        model="bitnet-b1.58-2b",
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
+        result=result,
+    ):
+        yield chunk
+
+
+def estimate_prompt_tokens(messages: list[dict]) -> int:
+    """
+    Estimate prompt token count using the 4-chars-per-token heuristic.
+    Fallback when the server doesn't report tokens_evaluated.
+    """
+    from api.services.providers.bitnet import _messages_to_prompt
     prompt = _messages_to_prompt(messages)
-
-    payload = {
-        "prompt": prompt,
-        "n_predict": max_tokens,
-        "temperature": temperature,
-        "top_p": top_p,
-        "stop": ["</s>", "<|end|>", "<|user|>"],
-        "stream": True,
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            async with client.stream(
-                "POST",
-                f"{settings.bitnet_host}/completion",
-                json=payload,
-            ) as resp:
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(data_str)
-                        content = data.get("content", "")
-                        if content:
-                            yield content
-                        if data.get("stop", False):
-                            break
-                    except json.JSONDecodeError:
-                        continue
-    except Exception as e:
-        yield f"\n[Error: {str(e)}]"
-
-
-def _messages_to_prompt(messages: list[dict]) -> str:
-    """
-    Convert OpenAI-style messages to a prompt format for BitNet/llama-server.
-    Uses a simple chat template compatible with most small models.
-    """
-    parts = []
-    for msg in messages:
-        role = msg["role"]
-        content = msg["content"]
-        if role == "system":
-            parts.append(f"<|system|>\n{content}</s>")
-        elif role == "user":
-            parts.append(f"<|user|>\n{content}</s>")
-        elif role == "assistant":
-            parts.append(f"<|assistant|>\n{content}</s>")
-    parts.append("<|assistant|>\n")
-    return "\n".join(parts)
+    return max(1, len(prompt) // 4)

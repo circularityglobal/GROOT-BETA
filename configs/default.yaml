@@ -1,0 +1,67 @@
+# REFINET Cloud — Default Configuration
+# Lowest precedence. Overridden by: production.yaml → agents/{name}.yaml → ENV vars
+
+groot:
+  model: bitnet-b1.58-2b
+  context_window: 2048
+  default_max_tokens: 512
+  temperature: 0.7
+  stream: true
+
+heartbeat:
+  interval_seconds: 60
+  max_consecutive_failures: 3
+  alert_webhook: null
+
+memory:
+  episodic_ttl_days: 90
+  working_clear_on_new_task: true
+  procedural_update_threshold: 0.8  # Only update patterns with >80% success rate
+
+orchestration:
+  max_iterations: 5
+  timeout_seconds: 60
+  max_delegation_depth: 3
+  enable_multi_agent_chaining: true
+
+trigger_router:
+  enabled: true
+  min_trigger_interval_seconds: 10
+  # Event → agent archetype mapping
+  event_map:
+    "device.telemetry.*": "device-monitor"
+    "device.status.*": "device-monitor"
+    "chain.event.*": "contract-watcher"
+    "chain.watcher.*": "contract-watcher"
+    "knowledge.document.*": "knowledge-curator"
+    "agent.task.completed": "orchestrator"
+    "system.health.*": "maintenance"
+
+tools:
+  enabled:
+    - search_documents
+    - search_registry
+    - list_contract_sdks
+    - get_contract_sdk
+    - get_project
+    - compare_documents
+    - get_document_tags
+    - list_scripts
+    - execute_script
+  sandbox:
+    enabled: false            # Admin-only, disabled by default
+    timeout_seconds: 30
+    filesystem_root: /opt/refinet/sandbox/
+
+safety:
+  inject_constraints: true
+  max_tokens_per_request: 512
+  max_requests_per_minute: 10
+  block_financial_advice: true
+  block_source_code_exposure: true
+  require_siwe_for_writes: true
+
+logging:
+  jsonl_enabled: true
+  jsonl_path: data/episodes
+  level: INFO

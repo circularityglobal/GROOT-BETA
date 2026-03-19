@@ -293,6 +293,21 @@ class RefinetAPI {
     return this.get(`/knowledge/contracts${qs}`)
   }
   addKnowledgeContract = (data: any) => this.post('/knowledge/contracts', data)
+
+  // ── User Provider Keys (BYOK) ──────────────────────────────
+  getProviderCatalog = () => this.get('/provider-keys/catalog')
+  listUserProviderKeys = () => this.get('/provider-keys')
+  saveUserProviderKey = (data: { provider_type: string; display_name: string; api_key: string; base_url?: string }) =>
+    this.post('/provider-keys', data)
+  deleteUserProviderKey = (id: string) => this.delete(`/provider-keys/${id}`)
+  testUserProviderKey = (id: string) => this.post(`/provider-keys/${id}/test`, {})
+
+  // ── Model Providers (Admin) ────────────────────────────────
+  listModels = () => this.get('/v1/models')
+  listProviders = () => this.get('/admin/providers')
+  checkProviderHealth = () => this.get('/admin/providers/health')
+  getProviderUsage = (period: string = 'day') => this.get(`/admin/providers/usage?period=${period}`)
+  updateProviderConfig = (key: string, value: string) => this.post('/admin/providers/config', { key, value })
 }
 
 export const api = new RefinetAPI()
