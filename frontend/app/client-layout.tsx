@@ -8,9 +8,18 @@ import { API_URL } from '@/lib/config'
 import GrootChatWidget from '@/components/GrootChat'
 import SettingsModal from '@/components/SettingsModal'
 
+// Wallet providers
+import { WagmiProvider } from 'wagmi'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { wagmiConfig } from '@/lib/wallet'
+
+// Singleton QueryClient (avoid re-creation on re-render)
+const queryClient = new QueryClient()
+
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [hydrated, setHydrated] = useState(false)
+  const pathname = usePathname()
 
   useEffect(() => {
     const token = localStorage.getItem('refinet_token')
@@ -29,17 +38,26 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     }
   }, [])
 
+  // Auth page (/settings/) gets full viewport — no nav, no padding
+  const isAuthPage = pathname === '/settings' || pathname === '/settings/'
+
   return (
-    <ThemeProvider>
-      {hydrated && isLoggedIn ? (
-        <AppShell>{children}</AppShell>
-      ) : (
-        <>
-          <PublicNavBar hydrated={hydrated} />
-          <main className="pt-[48px]">{children}</main>
-        </>
-      )}
-    </ThemeProvider>
+    <WagmiProvider config={wagmiConfig}>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          {hydrated && isLoggedIn ? (
+            <AppShell>{children}</AppShell>
+          ) : isAuthPage ? (
+            <>{children}</>
+          ) : (
+            <>
+              <PublicNavBar hydrated={hydrated} />
+              <main className="pt-[48px]">{children}</main>
+            </>
+          )}
+        </ThemeProvider>
+      </QueryClientProvider>
+    </WagmiProvider>
   )
 }
 
@@ -285,6 +303,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             )}
 
+            <SidebarItem href="/projects/" icon={<ProjectsIcon />} label="Projects" active={isActive('/projects')} collapsed={collapsed} />
             <SidebarItem href="/explore/" icon={<RegistryIcon />} label="Registry" active={isActive('/explore')} collapsed={collapsed} />
             <SidebarItem href="/repo/" icon={<RepoIcon />} label="Repositories" active={isActive('/repo')} collapsed={collapsed} />
             <SidebarItem href="/docs/" icon={<DocsIcon />} label="API Docs" active={isActive('/docs')} collapsed={collapsed} />
@@ -422,6 +441,7 @@ function ChatIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fil
 function DevicesIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M9 2v2M15 20v2M9 20v2M2 15h2M2 9h2M20 15h2M20 9h2"/></svg> }
 function WebhooksIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 16.98h1.67c1.47 0 2.68-1.2 2.68-2.68V7.35c0-1.47-1.2-2.68-2.68-2.68H4.33C2.87 4.67 1.67 5.87 1.67 7.35v6.95c0 1.47 1.2 2.68 2.68 2.68H6"/><polyline points="12 15 17 20 12 25"/></svg> }
 function KnowledgeIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> }
+function ProjectsIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> }
 function RegistryIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg> }
 function RepoIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> }
 function DocsIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> }

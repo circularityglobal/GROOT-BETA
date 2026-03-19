@@ -126,7 +126,7 @@ Any device that can send HTTP POST requests can register, send telemetry, and re
 ## Security
 
 ### Authentication (SIWE-First)
-- **Primary**: Sign-In with Ethereum (EIP-4361) — multi-chain wallet signatures
+- **Primary**: Sign-In with Ethereum (EIP-4361) — native multi-wallet (MetaMask, Coinbase, Brave, Phantom, all EIP-6963 injected wallets)
 - **Optional**: Password (Argon2id, per-user salt, server pepper)
 - **Optional**: TOTP 2FA via QR code (Google Authenticator compatible)
 
@@ -149,7 +149,7 @@ Any device that can send HTTP POST requests can register, send telemetry, and re
 | Backend | FastAPI 0.115.x + SQLAlchemy 2.0 + SQLite (WAL, dual DB) |
 | Inference | BitNet b1.58 2B4T via bitnet.cpp (CPU-native, ARM-optimized) |
 | Frontend | Next.js 14 App Router + React 18 + TypeScript + Tailwind CSS |
-| Web3 | ethers.js v6 + web3.py + eth-account (SIWE, custodial wallets) |
+| Web3 | wagmi + viem (native wallet connectors, no WalletConnect) + web3.py + eth-account (backend) |
 | Auth | Argon2id + PyJWT + pyotp + SIWE (EIP-4361) |
 | Encryption | cryptography (AES-256-GCM, HKDF, Shamir SSS) |
 | Embeddings | sentence-transformers (384-dim, semantic search) |

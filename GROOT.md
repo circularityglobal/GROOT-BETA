@@ -15,7 +15,7 @@ See the full specification in `docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md`.
 - Inference: BitNet b1.58 2B4T via bitnet.cpp (CPU-native, ARM-optimized)
 - RAG: sentence-transformers (384-dim embeddings) + hybrid keyword/semantic search
 - Frontend: Next.js 14 App Router + React 18 + TypeScript + Tailwind CSS → static export → Nginx
-- Web3: ethers.js v6 (frontend) + web3.py + eth-account (backend) for SIWE + custodial wallets
+- Web3: wagmi + viem (frontend, native multi-wallet, no WalletConnect) + web3.py + eth-account (backend) for SIWE + custodial wallets
 - Auth: SIWE (EIP-4361) + Argon2id + pyotp + PyJWT (12 scope types)
 - Encryption: AES-256-GCM + HKDF + Shamir Secret Sharing (5-of-3 threshold)
 - Protocols: 6-protocol MCP Gateway (REST, GraphQL, gRPC, SOAP, WebSocket, Webhooks)

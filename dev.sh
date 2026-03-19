@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────
 # REFINET Cloud — Local Development Launcher
 #
-# Starts both the backend API (port 8000) and frontend (port 3000).
+# Starts both the backend API (port 8000) and frontend (port 4000).
 # Ctrl+C kills both processes cleanly.
 #
 # Usage:
@@ -64,7 +64,7 @@ start_api() {
 }
 
 start_frontend() {
-  echo -e "${TEAL}Starting frontend${NC}    ${DIM}→ http://localhost:3000${NC}"
+  echo -e "${TEAL}Starting frontend${NC}    ${DIM}→ http://localhost:4000${NC}"
   (cd "$FRONTEND_DIR" && npm run dev 2>&1 | sed "s/^/  [web] /") &
   FE_PID=$!
 }

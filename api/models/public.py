@@ -4,7 +4,7 @@ All tables in public.db (user-facing data).
 """
 
 from sqlalchemy import (
-    Column, String, Boolean, Integer, DateTime, Text, ForeignKey
+    Column, String, Boolean, Integer, Float, DateTime, Text, ForeignKey, UniqueConstraint
 )
 from sqlalchemy.sql import func
 from api.database import PublicBase
@@ -297,3 +297,140 @@ class EmailAlias(PublicBase):
     ens_alias = Column(String, unique=True, nullable=True, index=True)     # e.g. alice.eth@cifi.global
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
+
+
+# ── On-Chain Event Watching ──────────────────────────────────────
+
+class ChainWatcher(PublicBase):
+    """Watches a contract address for specific events on a blockchain."""
+    __tablename__ = "chain_watchers"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    chain = Column(String, nullable=False)                # ethereum | base | arbitrum | polygon
+    contract_address = Column(String, nullable=False)
+    event_names = Column(Text, nullable=True)            # JSON array of event signatures to watch (null = all)
+    rpc_url = Column(String, nullable=True)              # Custom RPC, or use default chain RPC
+    from_block = Column(Integer, default=0)
+    last_processed_block = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    polling_interval_seconds = Column(Integer, default=30)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class ChainEvent(PublicBase):
+    """Detected on-chain event from a watched contract."""
+    __tablename__ = "chain_events"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    watcher_id = Column(String, ForeignKey("chain_watchers.id", ondelete="CASCADE"), nullable=False, index=True)
+    chain = Column(String, nullable=False)
+    contract_address = Column(String, nullable=False)
+    event_name = Column(String, nullable=True)
+    block_number = Column(Integer, nullable=False)
+    tx_hash = Column(String, nullable=False)
+    log_index = Column(Integer, nullable=False)
+    decoded_data = Column(Text, nullable=True)           # JSON: decoded event parameters
+    raw_data = Column(Text, nullable=True)               # JSON: raw log data
+    received_at = Column(DateTime, server_default=func.now())
+
+
+# ── Messenger Integrations ───────────────────────────────────────
+
+class MessengerLink(PublicBase):
+    """Links external messenger accounts to REFINET users."""
+    __tablename__ = "messenger_links"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    platform = Column(String, nullable=False)            # telegram | whatsapp
+    platform_user_id = Column(String, nullable=False, index=True)
+    platform_username = Column(String, nullable=True)
+    is_verified = Column(Boolean, default=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+# ── DApp Factory ─────────────────────────────────────────────────
+
+class DAppBuild(PublicBase):
+    """Tracks DApp assembly from registry contracts."""
+    __tablename__ = "dapp_builds"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    project_id = Column(String, nullable=True)           # Registry project ID (if from registry)
+    template_name = Column(String, nullable=False)
+    config_json = Column(Text, nullable=True)            # JSON: template configuration
+    status = Column(String, default="building")          # building | ready | failed
+    output_filename = Column(String, nullable=True)      # Generated zip filename
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    completed_at = Column(DateTime, nullable=True)
+
+
+# ── App Store ────────────────────────────────────────────────────
+
+class AppListing(PublicBase):
+    """
+    App Store listing — published DApps, agents, tools, or templates
+    that other users can discover, install, and review.
+    """
+    __tablename__ = "app_listings"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    owner_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    slug = Column(String, unique=True, nullable=False, index=True)   # url-safe identifier
+    description = Column(Text, nullable=True)
+    readme = Column(Text, nullable=True)                             # Markdown content
+    category = Column(String, nullable=False, index=True)            # dapp | agent | tool | template
+    chain = Column(String, nullable=True, index=True)                # ethereum | base | arbitrum | polygon | multi-chain
+    version = Column(String, default="1.0.0")
+    icon_url = Column(String, nullable=True)
+    screenshots = Column(Text, nullable=True)                        # JSON array of URLs
+    tags = Column(Text, nullable=True)                               # JSON array of strings
+    # Source references (optional — links to registry/dapp/agent)
+    registry_project_id = Column(String, nullable=True)              # Link to registry_projects.id
+    dapp_build_id = Column(String, nullable=True)                    # Link to dapp_builds.id
+    agent_id = Column(String, nullable=True)                         # Link to agent_registrations.id
+    # Metrics
+    install_count = Column(Integer, default=0)
+    rating_avg = Column(Float, default=0.0)
+    rating_count = Column(Integer, default=0)
+    # Status
+    is_published = Column(Boolean, default=False, index=True)
+    is_verified = Column(Boolean, default=False)                     # Admin-verified quality signal
+    is_featured = Column(Boolean, default=False, index=True)         # Curated featured listing
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now())
+
+
+class AppReview(PublicBase):
+    """User review/rating for an app listing."""
+    __tablename__ = "app_reviews"
+    __table_args__ = (
+        UniqueConstraint("app_id", "user_id", name="uq_app_review_user"),
+    )
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    app_id = Column(String, ForeignKey("app_listings.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    rating = Column(Integer, nullable=False)                         # 1–5
+    comment = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now())
+
+
+class AppInstall(PublicBase):
+    """Tracks app installations per user."""
+    __tablename__ = "app_installs"
+    __table_args__ = (
+        UniqueConstraint("app_id", "user_id", name="uq_app_install_user"),
+    )
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    app_id = Column(String, ForeignKey("app_listings.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    installed_at = Column(DateTime, server_default=func.now())
+    uninstalled_at = Column(DateTime, nullable=True)                 # null = still installed

@@ -126,6 +126,43 @@ class CustodialWallet(InternalBase):
     last_signing_at = Column(DateTime, nullable=True)
 
 
+class ScheduledTask(InternalBase):
+    """Configurable scheduled tasks — replaces hardcoded asyncio.sleep loops."""
+    __tablename__ = "scheduled_tasks"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    name = Column(String, unique=True, nullable=False, index=True)
+    task_type = Column(String, nullable=False)           # interval | cron | once
+    schedule = Column(String, nullable=False)            # seconds for interval, cron expression for cron
+    handler_path = Column(String, nullable=False)        # dotted path: api.services.rag.backfill_embeddings
+    handler_args = Column(Text, nullable=True)           # JSON arguments
+    is_enabled = Column(Boolean, default=True)
+    last_run_at = Column(DateTime, nullable=True)
+    next_run_at = Column(DateTime, nullable=True)
+    last_result = Column(String, nullable=True)          # success | error
+    last_error = Column(Text, nullable=True)
+    run_count = Column(Integer, default=0)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now())
+
+
+class ScriptExecution(InternalBase):
+    """Tracks execution of admin/agent scripts."""
+    __tablename__ = "script_executions"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    script_name = Column(String, nullable=False, index=True)
+    args_json = Column(Text, nullable=True)
+    status = Column(String, default="pending")           # pending | running | completed | failed
+    output = Column(Text, nullable=True)                 # stdout
+    error = Column(Text, nullable=True)                  # stderr
+    started_by = Column(String, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+
+
 class WalletShare(InternalBase):
     """Individual AES-256-GCM encrypted Shamir share."""
     __tablename__ = "wallet_shares"

@@ -3,18 +3,22 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "rm -rf .next && NODE_OPTIONS='--max-old-space-size=512' next dev -p 3002",
+    "dev": "rm -rf .next && NODE_OPTIONS='--max-old-space-size=2048' next dev -p 4000",
     "build": "rm -rf .next && next build",
     "start": "next start",
     "export": "rm -rf .next && next build",
     "clean": "rm -rf .next node_modules/.cache"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.60.0",
     "ethers": "^6.13.0",
     "framer-motion": "^12.38.0",
     "next": "^14.2.0",
+    "porto": "^0.2.37",
     "react": "^18.3.0",
-    "react-dom": "^18.3.0"
+    "react-dom": "^18.3.0",
+    "viem": "^2.21.0",
+    "wagmi": "^2.14.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

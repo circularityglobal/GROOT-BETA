@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # Core identity
     refinet_env: str = Field(default="development", alias="REFINET_ENV")
     refinet_domain: str = Field(default="localhost", alias="REFINET_DOMAIN")
-    refinet_frontend_url: str = Field(default="http://localhost:3002", alias="REFINET_FRONTEND_URL")
+    refinet_frontend_url: str = Field(default="http://localhost:4000", alias="REFINET_FRONTEND_URL")
 
     # Security
     secret_key: str = Field(..., alias="SECRET_KEY")
@@ -94,11 +94,8 @@ class Settings(BaseSettings):
         # when allow_credentials=True per the CORS spec)
         return [
             self.refinet_frontend_url,
-            "http://localhost:3000",
-            "http://localhost:3001",
-            "http://localhost:3002",
-            "http://127.0.0.1:3000",
-            "http://127.0.0.1:3001",
+            "http://localhost:4000",
+            "http://127.0.0.1:4000",
         ]
 
 

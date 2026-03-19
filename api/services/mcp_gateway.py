@@ -162,6 +162,37 @@ MCP_TOOLS = {
             "required": ["chain", "address", "function_name"],
         },
     },
+    # ── Script Execution Tool ──────────────────────────────────────────
+    "execute_script": {
+        "description": "Execute a registered platform script. Returns the script output. Use 'list_scripts' action with no script_name to discover available scripts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "script_name": {"type": "string", "description": "Name of the script to execute (e.g. 'db_stats', 'health_report')"},
+                "args": {"type": "object", "description": "Optional arguments to pass to the script"},
+            },
+            "required": ["script_name"],
+        },
+    },
+    "list_scripts": {
+        "description": "List all available platform scripts with their descriptions and categories.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    # ── Agent Delegation Tool ─────────────────────────────────────────
+    "delegate_to_agent": {
+        "description": "Delegate a subtask to another agent. The target agent must have delegation_policy set to 'auto' or 'approve' in its SOUL.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target_agent_id": {"type": "string", "description": "ID of the agent to delegate to"},
+                "subtask_description": {"type": "string", "description": "Description of what the target agent should do"},
+            },
+            "required": ["target_agent_id", "subtask_description"],
+        },
+    },
     # ── Document Ingestion & Tagging Tools ────────────────────────────
     "search_documents": {
         "description": "Search REFINET knowledge base documents by natural language query. Supports filtering by category and semantic tags. Returns relevant document chunks with relevance scores.",
@@ -447,6 +478,55 @@ async def dispatch_tool(
                         result["warning"] = fn.get("warning", "Restricted function")
                     return {"result": result}
             return {"error": f"Function '{fn_name}' not found in contract SDK"}
+
+        # ── Script Execution Tools ────────────────────────────────────
+        elif tool_name == "list_scripts":
+            from api.services.script_runner import discover_scripts
+            scripts = discover_scripts()
+            return {"result": [
+                {"name": s["name"], "description": s.get("description", ""), "category": s.get("category", "")}
+                for s in scripts
+            ]}
+
+        elif tool_name == "execute_script":
+            from api.services.script_runner import execute_script
+            result = await execute_script(
+                db,
+                script_name=arguments["script_name"],
+                args=arguments.get("args"),
+                started_by=user_id,
+            )
+            return {"result": result}
+
+        # ── Agent Delegation Tool ──────────────────────────────────────
+        elif tool_name == "delegate_to_agent":
+            if not user_id:
+                return {"error": "Authentication required for delegation"}
+            from api.services.agent_engine import delegate_task
+            from api.models.agent_engine import AgentTask
+            # Find a running task for the calling agent (source context)
+            # The source_agent_id comes from the execution context
+            source_task = db.query(AgentTask).filter(
+                AgentTask.user_id == user_id,
+                AgentTask.status == "running",
+            ).order_by(AgentTask.created_at.desc()).first()
+            if not source_task:
+                return {"error": "No running task context for delegation"}
+            delegation = await delegate_task(
+                db,
+                source_agent_id=source_task.agent_id,
+                target_agent_id=arguments["target_agent_id"],
+                source_task_id=source_task.id,
+                subtask_description=arguments["subtask_description"],
+                user_id=user_id,
+            )
+            if not delegation:
+                return {"error": "Delegation rejected by target agent"}
+            return {"result": {
+                "delegation_id": delegation.id,
+                "status": delegation.status,
+                "target_agent_id": arguments["target_agent_id"],
+            }}
 
         # ── Document Ingestion & Tagging Tools ────────────────────────
         elif tool_name == "search_documents":

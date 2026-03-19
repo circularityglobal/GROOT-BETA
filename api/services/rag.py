@@ -13,7 +13,7 @@ import re
 import uuid
 from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func as sqlfunc
+from sqlalchemy import or_, func as sqlfunc, literal_column
 
 from api.models.knowledge import KnowledgeDocument, KnowledgeChunk, ContractDefinition
 
@@ -154,12 +154,31 @@ def search_knowledge(
     if not keywords:
         return []
 
-    # Step 1: Keyword pre-filter — cast a wide net
-    conditions = []
-    for kw in keywords[:8]:  # Limit to 8 keywords
-        conditions.append(KnowledgeChunk.content.ilike(f"%{kw}%"))
+    # Step 1: Keyword pre-filter — FTS5 (BM25 ranked) with LIKE fallback
+    fts_rowids = None
+    fts_scores = {}
+    try:
+        from api.services.fts import search_fts5, is_fts5_available
+        if is_fts5_available(db):
+            fts_results = search_fts5(db, query, max_results=max_results * 6)
+            if fts_results:
+                fts_rowids = [r["rowid"] for r in fts_results]
+                fts_scores = {r["rowid"]: r["bm25_score"] for r in fts_results}
+    except Exception:
+        pass  # Fall through to LIKE
 
-    q = db.query(KnowledgeChunk).filter(or_(*conditions))
+    if fts_rowids is not None:
+        # Use FTS5 results — filter by rowid
+        from sqlalchemy import literal_column
+        q = db.query(KnowledgeChunk).filter(
+            literal_column("knowledge_chunks.rowid").in_(fts_rowids)
+        )
+    else:
+        # Fallback: LIKE-based keyword pre-filter
+        conditions = []
+        for kw in keywords[:8]:  # Limit to 8 keywords
+            conditions.append(KnowledgeChunk.content.ilike(f"%{kw}%"))
+        q = db.query(KnowledgeChunk).filter(or_(*conditions))
 
     # Always join to apply visibility filtering
     q = q.join(
@@ -229,6 +248,23 @@ def search_knowledge(
     for chunk in candidates:
         doc = doc_cache.get(chunk.document_id)
 
+        # BM25 score from FTS5 (if available) — normalize to 0..1 range
+        bm25_score = 0.0
+        if fts_scores and hasattr(chunk, '__table__'):
+            # Retrieve BM25 score by rowid lookup
+            try:
+                rowid_result = db.execute(
+                    KnowledgeChunk.__table__.select().where(
+                        KnowledgeChunk.id == chunk.id
+                    ).with_only_columns(literal_column("rowid"))
+                ).fetchone()
+                if rowid_result:
+                    raw_bm25 = fts_scores.get(rowid_result[0], 0.0)
+                    # BM25 scores are negative (lower = better), normalize
+                    bm25_score = min(1.0, max(0.0, -raw_bm25 / 10.0))
+            except Exception:
+                pass
+
         # Keyword score (baseline)
         content_lower = chunk.content.lower()
         kw_score = sum(1 for kw in keywords if kw in content_lower) / max(len(keywords), 1)
@@ -250,12 +286,20 @@ def search_knowledge(
             chunk_vec = deserialize_embedding(chunk.embedding)
             if chunk_vec:
                 sem_score = cosine_similarity(query_embedding, chunk_vec)
-                # Hybrid: 50% semantic + 30% keyword + 20% tag
-                score = 0.5 * sem_score + 0.3 * kw_score + 0.2 * tag_score
+                if bm25_score > 0:
+                    # Full hybrid: 40% semantic + 25% BM25 + 20% keyword + 15% tag
+                    score = 0.4 * sem_score + 0.25 * bm25_score + 0.2 * kw_score + 0.15 * tag_score
+                else:
+                    # Hybrid without BM25: 50% semantic + 30% keyword + 20% tag
+                    score = 0.5 * sem_score + 0.3 * kw_score + 0.2 * tag_score
             else:
                 score = 0.7 * kw_score + 0.3 * tag_score
         else:
-            score = 0.7 * kw_score + 0.3 * tag_score
+            if bm25_score > 0:
+                # BM25 + keyword + tag (no semantic)
+                score = 0.5 * bm25_score + 0.3 * kw_score + 0.2 * tag_score
+            else:
+                score = 0.7 * kw_score + 0.3 * tag_score
 
         scored.append((score, chunk, doc))
 

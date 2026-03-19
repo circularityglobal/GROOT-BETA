@@ -129,3 +129,74 @@ async def test_webhook(
         status_code=result.get("status_code"),
         message=result.get("message", ""),
     )
+
+
+# ── Telegram Webhook Receiver ────────────────────────────────────
+
+@router.post("/telegram")
+async def telegram_webhook(
+    request: Request,
+    db: Session = Depends(public_db_dependency),
+):
+    """
+    Telegram Bot webhook receiver.
+    No auth — verification is done via Telegram's secret token header.
+    """
+    # Verify Telegram secret token if configured
+    from api.services.config_defaults import get_config_value
+    from api.database import get_internal_session
+    with get_internal_session() as int_db:
+        bot_token = get_config_value(int_db, "messenger.telegram_bot_token")
+
+    if not bot_token:
+        raise HTTPException(status_code=503, detail="Telegram bot not configured")
+
+    body = await request.json()
+
+    from api.services.messenger_bridge import TelegramBridge
+    await TelegramBridge.handle_update(db, body, bot_token)
+
+    return {"ok": True}
+
+
+# ── WhatsApp Webhook Receiver ────────────────────────────────────
+
+@router.get("/whatsapp")
+async def whatsapp_verify(request: Request):
+    """WhatsApp webhook verification (hub.challenge)."""
+    mode = request.query_params.get("hub.mode")
+    token = request.query_params.get("hub.verify_token")
+    challenge = request.query_params.get("hub.challenge")
+
+    from api.services.config_defaults import get_config_value
+    from api.database import get_internal_session
+    with get_internal_session() as int_db:
+        verify_token = get_config_value(int_db, "messenger.whatsapp_verify_token")
+
+    if mode == "subscribe" and token == verify_token:
+        return int(challenge) if challenge else 0
+
+    raise HTTPException(status_code=403, detail="Verification failed")
+
+
+@router.post("/whatsapp")
+async def whatsapp_webhook(
+    request: Request,
+    db: Session = Depends(public_db_dependency),
+):
+    """WhatsApp Cloud API webhook receiver."""
+    from api.services.config_defaults import get_config_value
+    from api.database import get_internal_session
+    with get_internal_session() as int_db:
+        api_token = get_config_value(int_db, "messenger.whatsapp_api_token")
+        phone_number_id = get_config_value(int_db, "messenger.whatsapp_phone_number_id")
+
+    if not api_token or not phone_number_id:
+        raise HTTPException(status_code=503, detail="WhatsApp not configured")
+
+    body = await request.json()
+
+    from api.services.messenger_bridge import WhatsAppBridge
+    await WhatsAppBridge.handle_update(db, body, api_token, phone_number_id)
+
+    return {"ok": True}

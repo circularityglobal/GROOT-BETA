@@ -77,6 +77,50 @@ DEFAULTS = [
         "data_type": "boolean",
         "description": "Whether Oracle cloud storage is active (future)",
     },
+    # Messenger integrations
+    {
+        "key": "messenger.telegram_bot_token",
+        "value": "",
+        "data_type": "string",
+        "description": "Telegram Bot API token from @BotFather. Required for /webhooks/telegram endpoint.",
+    },
+    {
+        "key": "messenger.telegram_webhook_secret",
+        "value": "",
+        "data_type": "string",
+        "description": "Secret token for verifying incoming Telegram webhook requests (optional).",
+    },
+    {
+        "key": "messenger.whatsapp_api_token",
+        "value": "",
+        "data_type": "string",
+        "description": "WhatsApp Cloud API access token. Required for /webhooks/whatsapp endpoint.",
+    },
+    {
+        "key": "messenger.whatsapp_verify_token",
+        "value": "",
+        "data_type": "string",
+        "description": "WhatsApp webhook verification token (used during GET /webhooks/whatsapp handshake).",
+    },
+    {
+        "key": "messenger.whatsapp_phone_number_id",
+        "value": "",
+        "data_type": "string",
+        "description": "WhatsApp Business phone number ID for sending replies.",
+    },
+    # Chain listener
+    {
+        "key": "chain.polling_enabled",
+        "value": "true",
+        "data_type": "boolean",
+        "description": "Enable/disable on-chain event polling globally.",
+    },
+    {
+        "key": "chain.default_polling_interval",
+        "value": "30",
+        "data_type": "integer",
+        "description": "Default polling interval in seconds for chain watchers.",
+    },
 ]
 
 

@@ -348,7 +348,7 @@ Usage: python3 scripts/seed_knowledge.py --api-url https://api.refinet.io --toke
 
 4. Work through prompts in order, or pick the ones most relevant to your current priority
 
-5. After each prompt, verify the changes in the browser at localhost:3000
+5. After each prompt, verify the changes in the browser at localhost:4000
 
 6. PROMPT 10 (seed knowledge) should be run after deployment to give Groot its initial knowledge base
 

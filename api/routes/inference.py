@@ -220,6 +220,7 @@ async def chat_completions(
             endpoint="/v1/chat/completions",
         )
         db.add(usage_record)
+        db.flush()  # Ensure usage record is persisted before response
 
     # Build source references
     source_refs = [

@@ -18,6 +18,7 @@ from api.models.public import User, ApiKey, DeviceRegistration, AgentRegistratio
 from api.models.internal import (
     ServerSecret, AdminAuditLog, ProductRegistry,
     MCPServerRegistry, SystemConfig, RoleAssignment,
+    ScheduledTask,
 )
 from api.schemas.admin import (
     AdminUserSummary, RoleUpdateRequest, SecretCreateRequest,
@@ -356,6 +357,299 @@ def uptime_stats(
         "last_24h": compute_uptime(int_db, hours=24),
         "last_7d": compute_uptime(int_db, hours=168),
         "last_30d": compute_uptime(int_db, hours=720),
+    }
+
+
+# ── Scheduled Tasks ───────────────────────────────────────────────
+
+@router.get("/scheduled-tasks")
+def list_scheduled_tasks_route(
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """List all scheduled tasks with status and next run time."""
+    _require_admin(request, int_db)
+    from api.services.scheduler import list_scheduled_tasks
+    return list_scheduled_tasks(int_db)
+
+
+@router.post("/scheduled-tasks")
+def create_scheduled_task_route(
+    body: dict,
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Create a new scheduled task."""
+    admin_id, admin_name = _require_admin(request, int_db)
+
+    required = ["name", "task_type", "schedule", "handler_path"]
+    for field in required:
+        if field not in body:
+            raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+
+    if body["task_type"] not in ("interval", "cron", "once"):
+        raise HTTPException(status_code=400, detail="task_type must be: interval, cron, or once")
+
+    from api.services.scheduler import create_scheduled_task
+    task = create_scheduled_task(
+        int_db,
+        name=body["name"],
+        task_type=body["task_type"],
+        schedule=body["schedule"],
+        handler_path=body["handler_path"],
+        handler_args=json.dumps(body["handler_args"]) if body.get("handler_args") else None,
+        created_by=admin_name,
+    )
+
+    # Audit
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="CREATE_SCHEDULED_TASK",
+        target_type="scheduled_task",
+        target_id=task.id,
+        details=json.dumps({"name": body["name"], "task_type": body["task_type"], "schedule": body["schedule"]}),
+        ip_address=request.client.host if request.client else None,
+    ))
+
+    return {"id": task.id, "name": task.name, "message": "Scheduled task created"}
+
+
+@router.put("/scheduled-tasks/{task_id}")
+def update_scheduled_task_route(
+    task_id: str,
+    body: dict,
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Enable/disable a scheduled task or update its schedule."""
+    admin_id, admin_name = _require_admin(request, int_db)
+
+    task = int_db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+
+    if "is_enabled" in body:
+        task.is_enabled = bool(body["is_enabled"])
+    if "schedule" in body:
+        task.schedule = body["schedule"]
+    if "handler_args" in body:
+        task.handler_args = json.dumps(body["handler_args"]) if body["handler_args"] else None
+
+    task.updated_at = datetime.now(timezone.utc)
+    int_db.flush()
+
+    return {"message": f"Task '{task.name}' updated", "is_enabled": task.is_enabled}
+
+
+@router.delete("/scheduled-tasks/{task_id}")
+def delete_scheduled_task_route(
+    task_id: str,
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Delete a scheduled task."""
+    admin_id, admin_name = _require_admin(request, int_db)
+    from api.services.scheduler import delete_scheduled_task
+    if not delete_scheduled_task(int_db, task_id):
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="DELETE_SCHEDULED_TASK",
+        target_type="scheduled_task",
+        target_id=task_id,
+        ip_address=request.client.host if request.client else None,
+    ))
+
+    return {"message": "Scheduled task deleted"}
+
+
+@router.post("/scheduled-tasks/{task_id}/run")
+async def run_scheduled_task_now(
+    task_id: str,
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Force immediate execution of a scheduled task."""
+    admin_id, admin_name = _require_admin(request, int_db)
+
+    task = int_db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Scheduled task not found")
+
+    from api.services.scheduler import TaskScheduler
+    await TaskScheduler.get()._execute(task.name, task.handler_path, task.handler_args)
+
+    # Update run tracking on our session
+    task.last_run_at = datetime.now(timezone.utc)
+    task.run_count += 1
+    int_db.flush()
+
+    # Reload to pick up last_result written by _execute → _update_result (separate session)
+    int_db.refresh(task)
+
+    return {"message": f"Task '{task.name}' executed", "last_result": task.last_result}
+
+
+# ── Script Management ─────────────────────────────────────────────
+
+@router.get("/scripts")
+def list_scripts_route(
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """List all discovered platform scripts."""
+    _require_admin(request, int_db)
+    from api.services.script_runner import discover_scripts
+    scripts = discover_scripts()
+    return [
+        {
+            "name": s["name"],
+            "description": s.get("description", ""),
+            "category": s.get("category", ""),
+            "requires_admin": s.get("requires_admin", False),
+            "file_name": s.get("file_name", ""),
+        }
+        for s in scripts
+    ]
+
+
+@router.post("/scripts/{script_name}/run")
+async def run_script_route(
+    script_name: str,
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Execute a platform script by name."""
+    admin_id, admin_name = _require_admin(request, int_db)
+
+    from api.services.script_runner import execute_script
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    result = await execute_script(
+        int_db,
+        script_name=script_name,
+        args=body.get("args"),
+        started_by=admin_name,
+    )
+
+    if "error" in result and "execution_id" not in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    return result
+
+
+@router.get("/scripts/executions")
+def list_script_executions_route(
+    request: Request,
+    script_name: str = None,
+    limit: int = 20,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """List past script execution history."""
+    _require_admin(request, int_db)
+    from api.services.script_runner import list_executions
+    return list_executions(int_db, script_name=script_name, limit=limit)
+
+
+# ── Stats ──────────────────────────────────────────────────────────
+
+@router.get("/usage/summary")
+def usage_summary(
+    request: Request,
+    period: str = "week",
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """
+    Aggregated usage summary: total calls, tokens consumed, top users, agent task stats.
+    Periods: day, week, month.
+    """
+    _require_admin(request, int_db)
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    if period == "day":
+        cutoff = now - timedelta(days=1)
+    elif period == "month":
+        cutoff = now - timedelta(days=30)
+    else:
+        cutoff = now - timedelta(days=7)
+
+    # Inference usage
+    inference_total = pub_db.query(UsageRecord).filter(UsageRecord.created_at >= cutoff).count()
+    prompt_tokens = pub_db.query(sqlfunc.sum(UsageRecord.prompt_tokens)).filter(
+        UsageRecord.created_at >= cutoff
+    ).scalar() or 0
+    completion_tokens = pub_db.query(sqlfunc.sum(UsageRecord.completion_tokens)).filter(
+        UsageRecord.created_at >= cutoff
+    ).scalar() or 0
+    avg_latency = pub_db.query(sqlfunc.avg(UsageRecord.latency_ms)).filter(
+        UsageRecord.created_at >= cutoff
+    ).scalar() or 0
+
+    # Agent task stats
+    agent_stats = {}
+    try:
+        from api.models.agent_engine import AgentTask
+        agent_tasks_total = pub_db.query(AgentTask).filter(AgentTask.created_at >= cutoff).count()
+        agent_tasks_completed = pub_db.query(AgentTask).filter(
+            AgentTask.created_at >= cutoff, AgentTask.status == "completed"
+        ).count()
+        agent_tasks_failed = pub_db.query(AgentTask).filter(
+            AgentTask.created_at >= cutoff, AgentTask.status == "failed"
+        ).count()
+        agent_tokens = pub_db.query(sqlfunc.sum(AgentTask.tokens_used)).filter(
+            AgentTask.created_at >= cutoff
+        ).scalar() or 0
+        agent_stats = {
+            "tasks_total": agent_tasks_total,
+            "tasks_completed": agent_tasks_completed,
+            "tasks_failed": agent_tasks_failed,
+            "tokens_used": agent_tokens,
+        }
+    except Exception:
+        pass
+
+    # Top 5 users by inference calls
+    top_users = pub_db.query(
+        UsageRecord.user_id,
+        sqlfunc.count().label("calls"),
+        sqlfunc.sum(UsageRecord.prompt_tokens + UsageRecord.completion_tokens).label("tokens"),
+    ).filter(
+        UsageRecord.created_at >= cutoff,
+        UsageRecord.user_id != None,  # noqa: E711
+    ).group_by(UsageRecord.user_id).order_by(sqlfunc.count().desc()).limit(5).all()
+
+    top_user_list = []
+    for row in top_users:
+        user = pub_db.query(User).filter(User.id == row.user_id).first()
+        top_user_list.append({
+            "user_id": row.user_id,
+            "username": user.username if user else None,
+            "calls": row.calls,
+            "tokens": row.tokens or 0,
+        })
+
+    return {
+        "period": period,
+        "from": cutoff.isoformat(),
+        "to": now.isoformat(),
+        "inference": {
+            "total_calls": inference_total,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "avg_latency_ms": round(avg_latency, 1),
+        },
+        "agent_tasks": agent_stats,
+        "top_users": top_user_list,
     }
 
 

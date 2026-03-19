@@ -113,6 +113,86 @@ def search_public_sdks(
     return results
 
 
+def ingest_sdk_to_knowledge(db: Session, contract: "ContractRepo", sdk: "SDKDefinition") -> Optional[str]:
+    """
+    Bridge SDK definitions into the knowledge base for RAG.
+    Creates a KnowledgeDocument + KnowledgeChunks from the SDK's textual content
+    so GROOT can find contract info through normal RAG search.
+
+    Returns the document_id if created, None if already exists or failed.
+    """
+    try:
+        sdk_data = json.loads(sdk.sdk_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    # Build a human-readable summary from the SDK
+    parts = [f"# {contract.name} — Smart Contract SDK"]
+    if contract.description:
+        parts.append(f"\n{contract.description}")
+    parts.append(f"\nChain: {contract.chain}")
+    if contract.address:
+        parts.append(f"Address: {contract.address}")
+
+    # Public functions
+    public_fns = sdk_data.get("functions", {}).get("public", [])
+    if public_fns:
+        parts.append("\n## Public Functions")
+        for fn in public_fns:
+            sig = fn.get("signature", fn.get("name", ""))
+            desc = fn.get("natspec_notice", "")
+            parts.append(f"- `{sig}`{': ' + desc if desc else ''}")
+
+    # Admin functions
+    admin_fns = sdk_data.get("functions", {}).get("owner_admin", [])
+    if admin_fns:
+        parts.append("\n## Admin/Owner Functions (Restricted)")
+        for fn in admin_fns:
+            sig = fn.get("signature", fn.get("name", ""))
+            modifier = fn.get("access_modifier", "")
+            parts.append(f"- `{sig}` [{modifier}]")
+
+    # Events
+    events = sdk_data.get("events", [])
+    if events:
+        parts.append("\n## Events")
+        for ev in events:
+            parts.append(f"- {ev.get('name', '')}({ev.get('signature', '')})")
+
+    # Security summary
+    security = sdk_data.get("security_summary", {})
+    if security:
+        parts.append("\n## Security")
+        parts.append(f"Access control: {security.get('access_control_pattern', 'unknown')}")
+        if security.get("dangerous_functions"):
+            parts.append(f"Dangerous functions detected: {', '.join(security['dangerous_functions'])}")
+
+    content = "\n".join(parts)
+
+    # Use the RAG ingest pipeline
+    from api.services.rag import ingest_document
+
+    tags = []
+    if contract.tags:
+        try:
+            tags = json.loads(contract.tags)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    tags.append("contract-sdk")
+    tags.append(contract.chain)
+
+    doc = ingest_document(
+        db=db,
+        title=f"{contract.name} SDK ({contract.chain})",
+        content=content,
+        category="contract-sdk",
+        uploaded_by=contract.user_id,
+        source_filename=f"{contract.slug}.sdk.json",
+        tags=tags,
+    )
+    return doc.id if doc else None
+
+
 def get_sdk_context_for_groot(
     db: Session,
     query: str,

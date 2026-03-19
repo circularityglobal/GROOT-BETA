@@ -47,6 +47,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logging.getLogger("refinet").warning(f"Config seed failed: {e}")
 
+    # ── Ensure FTS5 index exists for knowledge search ───────────
+    try:
+        from api.database import get_public_session
+        from api.services.fts import ensure_fts5
+        with get_public_session() as pub_db:
+            ensure_fts5(pub_db)
+    except Exception as e:
+        logging.getLogger("refinet").warning(f"FTS5 init skipped: {e}")
+
     # ── Register event bus handlers ──────────────────────────────
     from api.services.event_bus import EventBus
     from api.routes.mcp_websocket import ws_manager
@@ -65,7 +74,40 @@ async def lifespan(app: FastAPI):
     bus.subscribe("knowledge.*", deliver_bus_event)
     from api.services.knowledge_refresh import on_knowledge_change
     bus.subscribe("knowledge.*", on_knowledge_change)
-    logging.getLogger("refinet").info("Event bus handlers registered (registry + messaging + system + knowledge → WS + webhooks + GROOT refresh)")
+    # SDK→Knowledge bridge: auto-ingest SDK definitions into RAG when published
+    async def _on_sdk_publish(event: str, data: dict):
+        """Bridge SDK definitions into knowledge chunks for RAG search."""
+        try:
+            from api.database import get_public_db
+            from api.services.contract_brain import ingest_sdk_to_knowledge
+            from api.models.brain import ContractRepo, SDKDefinition
+            contract_id = data.get("contract_id")
+            if not contract_id:
+                return
+            with get_public_db() as pub_db:
+                contract = pub_db.query(ContractRepo).filter(
+                    ContractRepo.id == contract_id,
+                ).first()
+                sdk = pub_db.query(SDKDefinition).filter(
+                    SDKDefinition.contract_id == contract_id,
+                    SDKDefinition.is_public == True,  # noqa: E712
+                ).first()
+                if contract and sdk:
+                    ingest_sdk_to_knowledge(pub_db, contract, sdk)
+        except Exception as e:
+            logging.getLogger("refinet").warning(f"SDK→Knowledge bridge error: {e}")
+
+    bus.subscribe("registry.sdk.*", _on_sdk_publish)
+    bus.subscribe("registry.visibility.*", _on_sdk_publish)
+    # Chain events — on-chain events detected by watchers → WS broadcast + webhook delivery
+    bus.subscribe("chain.*", ws_manager.broadcast_event)
+    bus.subscribe("chain.*", deliver_bus_event)
+    # Agent events — task completion, delegation → WS broadcast + webhook delivery
+    bus.subscribe("agent.*", ws_manager.broadcast_event)
+    bus.subscribe("agent.*", deliver_bus_event)
+    logging.getLogger("refinet").info(
+        "Event bus handlers registered (registry + messaging + system + knowledge + chain + agent → WS + webhooks)"
+    )
 
     # ── Start SMTP bridge (if enabled) ───────────────────────────
     try:
@@ -135,7 +177,38 @@ async def lifespan(app: FastAPI):
                 logging.getLogger("refinet").error(f"Auth cleanup error: {e}")
 
     _auth_cleanup_task = asyncio.create_task(_auth_cleanup_loop())
-    logging.getLogger("refinet").info("Uptime monitor started (60s interval)")
+
+    # ── Agent memory cleanup task ──────────────────────────────────
+    async def _memory_cleanup_loop():
+        from api.services.agent_memory import cleanup_expired_working
+        from api.database import get_public_session
+        while True:
+            await asyncio.sleep(300)  # Every 5 minutes
+            try:
+                with get_public_session() as db:
+                    cleaned = cleanup_expired_working(db)
+                    db.commit()
+                    if cleaned:
+                        logging.getLogger("refinet").info(f"Agent memory cleanup: {cleaned} expired entries removed")
+            except Exception as e:
+                logging.getLogger("refinet").error(f"Agent memory cleanup error: {e}")
+
+    _memory_cleanup_task = asyncio.create_task(_memory_cleanup_loop())
+    logging.getLogger("refinet").info("Uptime monitor + agent memory cleanup started")
+
+    # ── Start configurable task scheduler ──────────────────────────
+    try:
+        from api.services.scheduler import TaskScheduler, seed_default_tasks
+        from api.database import get_internal_session as _get_int_session
+        # Seed default scheduled tasks (p2p_cleanup, health_monitor, auth_cleanup, memory_cleanup)
+        with _get_int_session() as sched_db:
+            seed_default_tasks(sched_db)
+        # Start the scheduler master loop (10s tick, checks due tasks)
+        _scheduler_task = asyncio.create_task(TaskScheduler.get().start())
+        logging.getLogger("refinet").info("Task scheduler started (10s tick)")
+    except Exception as e:
+        _scheduler_task = None
+        logging.getLogger("refinet").warning(f"Scheduler not started: {e}")
 
     # ── Start webhook delivery worker ─────────────────────────────
     from api.services.webhook_delivery import webhook_worker
@@ -148,6 +221,14 @@ async def lifespan(app: FastAPI):
     _cleanup_task.cancel()
     _monitor_task.cancel()
     _webhook_task.cancel()
+    _memory_cleanup_task.cancel()
+    if _scheduler_task:
+        try:
+            from api.services.scheduler import TaskScheduler
+            await TaskScheduler.get().stop()
+        except Exception:
+            pass
+        _scheduler_task.cancel()
     if _grpc_task:
         _grpc_task.cancel()
         try:
@@ -176,6 +257,8 @@ def create_app() -> FastAPI:
     # ── Middleware (order matters — last added = first executed) ────
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(RequestSizeMiddleware)
+    from api.middleware.request_id import RequestIDMiddleware
+    app.add_middleware(RequestIDMiddleware)
     add_cors(app)
 
     # Rate limiter
@@ -220,6 +303,18 @@ def create_app() -> FastAPI:
     from api.routes.explore import router as explore_router
     app.include_router(repo_router)
     app.include_router(explore_router)
+
+    # ── Chain Event Routes ─────────────────────────────────────────
+    from api.routes.chain import router as chain_router
+    app.include_router(chain_router)
+
+    # ── DApp Factory Routes ───────────────────────────────────────
+    from api.routes.dapp import router as dapp_router
+    app.include_router(dapp_router)
+
+    # ── App Store Routes ──────────────────────────────────────────
+    from api.routes.app_store import router as app_store_router
+    app.include_router(app_store_router)
 
     # ── WebSocket Routes ─────────────────────────────────────────
     from api.routes.mcp_websocket import router as ws_router

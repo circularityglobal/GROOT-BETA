@@ -2,11 +2,14 @@
 from api.models.public import (  # noqa: F401
     User, ApiKey, DeviceRegistration, AgentRegistration,
     IoTTelemetry, WebhookSubscription, UsageRecord, SIWENonce, RefreshToken,
+    ChainWatcher, ChainEvent, MessengerLink, DAppBuild,
+    AppListing, AppReview, AppInstall,
 )
 from api.models.internal import (  # noqa: F401
     ServerSecret, RoleAssignment, AdminAuditLog,
     ProductRegistry, MCPServerRegistry, SystemConfig,
     CustodialWallet, WalletShare,
+    ScheduledTask, ScriptExecution,
 )
 from api.models.knowledge import (  # noqa: F401
     KnowledgeDocument, KnowledgeChunk, ContractDefinition,
@@ -18,4 +21,9 @@ from api.models.registry import (  # noqa: F401
 from api.models.brain import (  # noqa: F401
     UserRepository, ContractRepo, ContractFunction,
     ContractEvent, SDKDefinition,
+)
+from api.models.agent_engine import (  # noqa: F401
+    AgentSoul, AgentMemoryWorking, AgentMemoryEpisodic,
+    AgentMemorySemantic, AgentMemoryProcedural,
+    AgentTask, AgentDelegation,
 )

@@ -1,11 +1,13 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { useAccount, useConnect, useSignMessage, useDisconnect, Connector } from 'wagmi'
 import { API_URL } from '@/lib/config'
 import WalletOnboarding from '@/components/WalletOnboarding'
 
 type AuthStep = 'connect' | 'onboarding' | 'complete'
+type AuthTab = 'connect' | 'create'
 
 interface ChainInfo {
   chain_id: number
@@ -13,15 +15,6 @@ interface ChainInfo {
   short_name: string
   currency: string
   is_testnet: boolean
-}
-
-interface AuthState {
-  step: AuthStep
-  error: string
-  connecting: boolean
-  chainId: number
-  chainName: string
-  supportedChains: ChainInfo[]
 }
 
 const DEFAULT_CHAINS: ChainInfo[] = [
@@ -33,94 +26,149 @@ const DEFAULT_CHAINS: ChainInfo[] = [
   { chain_id: 11155111, name: 'Sepolia', short_name: 'sep', currency: 'SEP', is_testnet: true },
 ]
 
+// Chain icons (minimal SVG representations)
+const CHAIN_ICONS: Record<number, string> = {
+  1: '⟠',      // Ethereum
+  137: '⬡',    // Polygon
+  42161: '◆',   // Arbitrum
+  10: '◉',      // Optimism
+  8453: '◈',    // Base
+  11155111: '⟠', // Sepolia
+}
+
+// Wallet brand colors
+const WALLET_BRANDS: Record<string, { color: string; icon: React.ReactNode }> = {
+  metamask: {
+    color: '#F6851B',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path d="M21.3 2L13.1 8.2l1.5-3.6L21.3 2z" fill="#E2761B" stroke="#E2761B" strokeWidth="0.1"/>
+        <path d="M2.7 2l8.1 6.3-1.4-3.7L2.7 2zM18.4 17.1l-2.2 3.3 4.6 1.3 1.3-4.5-3.7-.1zM1.9 17.2l1.3 4.5 4.6-1.3-2.2-3.3-3.7.1z" fill="#E4761B" stroke="#E4761B" strokeWidth="0.1"/>
+        <path d="M7.5 10.7l-1.3 2 4.6.2-.2-5-3.1 2.8zM16.5 10.7l-3.2-2.9-.1 5.1 4.6-.2-1.3-2zM7.8 20.4l2.8-1.4-2.4-1.9-.4 3.3zM13.4 19l2.8 1.4-.4-3.3-2.4 1.9z" fill="#E4761B" stroke="#E4761B" strokeWidth="0.1"/>
+      </svg>
+    ),
+  },
+  coinbase: {
+    color: '#0052FF',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <rect width="24" height="24" rx="6" fill="#0052FF"/>
+        <path d="M12 4.5a7.5 7.5 0 100 15 7.5 7.5 0 000-15zm-2.25 5.25h4.5a.75.75 0 01.75.75v3a.75.75 0 01-.75.75h-4.5a.75.75 0 01-.75-.75v-3a.75.75 0 01.75-.75z" fill="white"/>
+      </svg>
+    ),
+  },
+  default: {
+    color: 'var(--refi-teal)',
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <rect x="2" y="6" width="20" height="14" rx="3"/>
+        <path d="M16 14a2 2 0 100-4 2 2 0 000 4z"/>
+        <path d="M2 10h20"/>
+      </svg>
+    ),
+  },
+}
+
+function getWalletBrand(connector: Connector) {
+  const id = connector.id.toLowerCase()
+  const name = connector.name.toLowerCase()
+  if (id.includes('metamask') || id === 'io.metamask' || name.includes('metamask')) return WALLET_BRANDS.metamask
+  if (id.includes('coinbase') || name.includes('coinbase')) return WALLET_BRANDS.coinbase
+  return WALLET_BRANDS.default
+}
+
+function getWalletDisplayName(connector: Connector): string {
+  const name = connector.name
+  if (name === 'Injected') return 'Browser Wallet'
+  return name
+}
+
 export default function AuthFlow({ onComplete }: { onComplete?: (token: string) => void }) {
   const router = useRouter()
   const prefetchedNonce = useRef<{ nonce: string } | null>(null)
 
-  const [state, setState] = useState<AuthState>({
-    step: 'connect',
-    error: '',
-    connecting: false,
-    chainId: 1,
-    chainName: 'Ethereum',
-    supportedChains: DEFAULT_CHAINS,
-  })
+  const { address, isConnected } = useAccount()
+  const { connectors, connect, isPending: isConnecting } = useConnect()
+  const { signMessageAsync } = useSignMessage()
+  const { disconnect } = useDisconnect()
 
-  // Prefetch both chains and nonce in parallel on mount
+  const [tab, setTab] = useState<AuthTab>('connect')
+  const [step, setStep] = useState<AuthStep>('connect')
+  const [error, setError] = useState('')
+  const [connecting, setConnecting] = useState(false)
+  const [signing, setSigning] = useState(false)
+  const [chainId, setChainId] = useState(1)
+  const [chainName, setChainName] = useState('Ethereum')
+  const [supportedChainsList, setSupportedChainsList] = useState<ChainInfo[]>(DEFAULT_CHAINS)
+  const [showTestnets, setShowTestnets] = useState(false)
+
+  // Prefetch chains and nonce
   useEffect(() => {
     fetch(`${API_URL}/auth/chains`)
       .then((r) => r.json())
       .then((data) => {
-        if (data.chains?.length) {
-          setState((s) => ({ ...s, supportedChains: data.chains }))
-        }
+        if (data.chains?.length) setSupportedChainsList(data.chains)
       })
       .catch(() => {})
 
-    // Prefetch nonce so it's ready when user clicks connect
     fetch(`${API_URL}/auth/siwe/nonce`)
       .then((r) => r.json())
       .then((data) => { prefetchedNonce.current = data })
       .catch(() => {})
   }, [])
 
-  const handleChainSelect = (chainId: number) => {
-    const chain = state.supportedChains.find((c) => c.chain_id === chainId)
-    setState((s) => ({
-      ...s,
-      chainId: chainId,
-      chainName: chain?.name || `Chain ${chainId}`,
-    }))
+  // Auto-proceed to SIWE signing when wallet connects
+  useEffect(() => {
+    if (isConnected && address && connecting) {
+      handleSIWESign(address)
+    }
+  }, [isConnected, address, connecting])
+
+  const handleChainSelect = (id: number) => {
+    const chain = supportedChainsList.find((c) => c.chain_id === id)
+    setChainId(id)
+    setChainName(chain?.name || `Chain ${id}`)
   }
 
-  const handleSIWE = async () => {
+  const handleConnect = useCallback((connector: Connector) => {
+    setError('')
+    setConnecting(true)
     try {
-      setState((s) => ({ ...s, error: '', connecting: true }))
+      connect({ connector })
+    } catch (e: any) {
+      setError(e.message || 'Connection failed')
+      setConnecting(false)
+    }
+  }, [connect])
 
-      if (typeof window === 'undefined' || !(window as any).ethereum) {
-        setState((s) => ({
-          ...s,
-          error: 'No Ethereum wallet detected. Install MetaMask to continue.',
-          connecting: false,
-        }))
-        return
-      }
+  const handleSIWESign = async (walletAddress: string) => {
+    try {
+      setSigning(true)
 
-      const ethereum = (window as any).ethereum
-
-      // Request accounts and nonce in parallel
-      const [accounts, nonceData] = await Promise.all([
-        ethereum.request({ method: 'eth_requestAccounts' }),
-        prefetchedNonce.current
-          ? Promise.resolve(prefetchedNonce.current)
-          : fetch(`${API_URL}/auth/siwe/nonce`).then((r) => {
-              if (!r.ok) throw new Error('Failed to get nonce')
-              return r.json()
-            }),
-      ])
-      const address = accounts[0]
-      // Clear prefetched nonce (single use)
+      const nonceData = prefetchedNonce.current
+        ? prefetchedNonce.current
+        : await fetch(`${API_URL}/auth/siwe/nonce`).then((r) => {
+            if (!r.ok) throw new Error('Failed to get nonce')
+            return r.json()
+          })
       prefetchedNonce.current = null
 
       const domain = new URL(API_URL).host
       const now = new Date().toISOString()
       const message = [
         `${domain} wants you to sign in with your Ethereum account:`,
-        address,
+        walletAddress,
         '',
         'Sign in to REFINET Cloud. Your Ethereum address is used as a cryptographic key component.',
         '',
         `URI: https://${domain}`,
         'Version: 1',
-        `Chain ID: ${state.chainId}`,
+        `Chain ID: ${chainId}`,
         `Nonce: ${nonceData.nonce}`,
         `Issued At: ${now}`,
       ].join('\n')
 
-      const signature = await ethereum.request({
-        method: 'personal_sign',
-        params: [message, address],
-      })
+      const signature = await signMessageAsync({ message })
 
       const verifyResp = await fetch(`${API_URL}/auth/siwe/verify`, {
         method: 'POST',
@@ -129,7 +177,7 @@ export default function AuthFlow({ onComplete }: { onComplete?: (token: string) 
           message,
           signature,
           nonce: nonceData.nonce,
-          chain_id: state.chainId,
+          chain_id: chainId,
         }),
       })
 
@@ -147,142 +195,273 @@ export default function AuthFlow({ onComplete }: { onComplete?: (token: string) 
       onComplete?.(data.access_token)
       router.push('/dashboard')
     } catch (e: any) {
-      setState((s) => ({ ...s, error: e.message, connecting: false }))
+      setError(e.message)
+      setConnecting(false)
+      setSigning(false)
     }
   }
 
-  // Open the wallet onboarding wizard
-  const handleStartCreateWallet = () => {
-    setState((s) => ({ ...s, step: 'onboarding', error: '' }))
-  }
+  const isBusy = connecting || signing || isConnecting
 
-  const isBusy = state.connecting
+  // Deduplicate connectors by name (wagmi can register duplicates)
+  const seen = new Set<string>()
+  const uniqueConnectors = connectors.filter((c) => {
+    const key = c.name.toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+
+  // Separate injected/known connectors
+  const walletConnectors = uniqueConnectors.filter(
+    (c) => c.id !== 'walletConnect' // Exclude WalletConnect entirely
+  )
+
+  const mainnetChains = supportedChainsList.filter((c) => !c.is_testnet)
+  const testnetChains = supportedChainsList.filter((c) => c.is_testnet)
 
   return (
     <>
-      <div className="max-w-md mx-auto p-8">
-        {state.error && (
-          <div className="mb-6 p-3 bg-red-900/30 border border-red-800 rounded-lg text-sm text-red-300">
-            {state.error}
+      <div className="auth-right-panel">
+        {/* Logo & Header */}
+        <div className="auth-header">
+          <div className="auth-logo-row">
+            <img src="/refi-logo.png" alt="REFINET" className="auth-logo" />
+            <span className="auth-brand">
+              REFINET<span className="auth-brand-accent"> Cloud</span>
+            </span>
+          </div>
+          <h1 className="auth-title">Welcome back</h1>
+          <p className="auth-subtitle">
+            Connect your wallet to access sovereign AI infrastructure
+          </p>
+        </div>
+
+        {/* Tab Switcher */}
+        <div className="auth-tabs">
+          <button
+            className={`auth-tab ${tab === 'connect' ? 'auth-tab-active' : ''}`}
+            onClick={() => { setTab('connect'); setStep('connect'); setError('') }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="6" width="20" height="14" rx="3"/>
+              <path d="M16 14a2 2 0 100-4 2 2 0 000 4z"/>
+            </svg>
+            Connect Wallet
+          </button>
+          <button
+            className={`auth-tab ${tab === 'create' ? 'auth-tab-active' : ''}`}
+            onClick={() => { setTab('create'); setError('') }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="16"/>
+              <line x1="8" y1="12" x2="16" y2="12"/>
+            </svg>
+            Create Wallet
+          </button>
+        </div>
+
+        {/* Error Banner */}
+        {error && (
+          <div className="auth-error">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+            </svg>
+            <span>{error}</span>
+            <button onClick={() => setError('')} className="auth-error-dismiss">&times;</button>
           </div>
         )}
 
-        {(state.step === 'connect' || state.step === 'onboarding') && (
-          <div className="space-y-4">
-            <h2 className="text-xl font-bold mb-2" style={{ letterSpacing: '-0.02em' }}>
-              Sign In with Ethereum
-            </h2>
-            <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
-              Connect your existing wallet or create a free one instantly.
-            </p>
-
-            {/* Chain Selector */}
-            <div className="mb-2">
-              <label className="text-xs font-medium mb-2 block" style={{ color: 'var(--text-tertiary)' }}>
-                Network
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {state.supportedChains
-                  .filter((c) => !c.is_testnet)
-                  .map((chain) => (
-                    <button
-                      key={chain.chain_id}
-                      onClick={() => handleChainSelect(chain.chain_id)}
-                      disabled={isBusy}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-                      style={{
-                        background: state.chainId === chain.chain_id ? 'var(--refi-teal-glow)' : 'var(--bg-secondary)',
-                        color: state.chainId === chain.chain_id ? 'var(--refi-teal)' : 'var(--text-secondary)',
-                        border: `1px solid ${state.chainId === chain.chain_id ? 'var(--refi-teal)' : 'var(--border-default)'}`,
-                      }}
-                    >
-                      {chain.name}
-                    </button>
-                  ))}
-                {state.supportedChains
-                  .filter((c) => c.is_testnet)
-                  .map((chain) => (
-                    <button
-                      key={chain.chain_id}
-                      onClick={() => handleChainSelect(chain.chain_id)}
-                      disabled={isBusy}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all opacity-60"
-                      style={{
-                        background: state.chainId === chain.chain_id ? 'var(--refi-teal-glow)' : 'var(--bg-secondary)',
-                        color: state.chainId === chain.chain_id ? 'var(--refi-teal)' : 'var(--text-tertiary)',
-                        border: `1px solid ${state.chainId === chain.chain_id ? 'var(--refi-teal)' : 'var(--border-default)'}`,
-                      }}
-                    >
-                      {chain.name}
-                    </button>
-                  ))}
+        {/* ─── Connect Wallet Tab ─── */}
+        {tab === 'connect' && step !== 'onboarding' && (
+          <div className="auth-content">
+            {/* Network Selector */}
+            <div className="auth-section">
+              <div className="auth-section-header">
+                <label className="auth-label">Select Network</label>
+                {testnetChains.length > 0 && (
+                  <button
+                    className="auth-testnet-toggle"
+                    onClick={() => setShowTestnets(!showTestnets)}
+                  >
+                    {showTestnets ? 'Hide' : 'Show'} Testnets
+                  </button>
+                )}
+              </div>
+              <div className="auth-chain-grid">
+                {mainnetChains.map((chain) => (
+                  <button
+                    key={chain.chain_id}
+                    onClick={() => handleChainSelect(chain.chain_id)}
+                    disabled={isBusy}
+                    className={`auth-chain-btn ${chainId === chain.chain_id ? 'auth-chain-btn-active' : ''}`}
+                  >
+                    <span className="auth-chain-icon">{CHAIN_ICONS[chain.chain_id] || '●'}</span>
+                    <span>{chain.name}</span>
+                  </button>
+                ))}
+                {showTestnets && testnetChains.map((chain) => (
+                  <button
+                    key={chain.chain_id}
+                    onClick={() => handleChainSelect(chain.chain_id)}
+                    disabled={isBusy}
+                    className={`auth-chain-btn auth-chain-btn-testnet ${chainId === chain.chain_id ? 'auth-chain-btn-active' : ''}`}
+                  >
+                    <span className="auth-chain-icon">{CHAIN_ICONS[chain.chain_id] || '●'}</span>
+                    <span>{chain.name}</span>
+                    <span className="auth-testnet-badge">testnet</span>
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Option 1: Existing wallet */}
-            <div className="card p-4 text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-              <p className="mb-2">Connect existing wallet:</p>
-              <p>&#8226; Your wallet signs a one-time message (no transaction, no gas)</p>
-              <p>&#8226; Your Ethereum address becomes your identity</p>
-              <p>&#8226; Works across {state.supportedChains.filter((c) => !c.is_testnet).length} supported networks</p>
-            </div>
-            <button
-              onClick={handleSIWE}
-              disabled={isBusy}
-              className="btn-primary w-full !py-3 !text-sm tracking-wider font-semibold"
-              style={{ opacity: isBusy ? 0.7 : 1 }}
-            >
-              {state.connecting ? 'CONNECTING...' : `CONNECT WALLET ON ${state.chainName.toUpperCase()}`}
-            </button>
+            {/* Wallet List */}
+            <div className="auth-section">
+              <label className="auth-label">Choose Wallet</label>
+              <div className="auth-wallet-list">
+                {walletConnectors.map((connector) => {
+                  const brand = getWalletBrand(connector)
+                  const displayName = getWalletDisplayName(connector)
+                  return (
+                    <button
+                      key={connector.uid}
+                      onClick={() => handleConnect(connector)}
+                      disabled={isBusy}
+                      className="auth-wallet-btn"
+                    >
+                      <div className="auth-wallet-icon" style={{ color: brand.color }}>
+                        {brand.icon}
+                      </div>
+                      <div className="auth-wallet-info">
+                        <span className="auth-wallet-name">{displayName}</span>
+                        <span className="auth-wallet-detail">
+                          {connector.id === 'injected' ? 'Browser extension' : 'Direct connection'}
+                        </span>
+                      </div>
+                      <div className="auth-wallet-arrow">
+                        {isBusy ? (
+                          <div className="auth-spinner" />
+                        ) : (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="9 18 15 12 9 6"/>
+                          </svg>
+                        )}
+                      </div>
+                    </button>
+                  )
+                })}
 
-            {/* Divider */}
-            <div className="flex items-center gap-3 py-1">
-              <div className="flex-1 h-px" style={{ background: 'var(--border-default)' }} />
-              <span className="text-xs font-medium" style={{ color: 'var(--text-tertiary)' }}>OR</span>
-              <div className="flex-1 h-px" style={{ background: 'var(--border-default)' }} />
+                {walletConnectors.length === 0 && (
+                  <div className="auth-empty-state">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.4 }}>
+                      <rect x="2" y="6" width="20" height="14" rx="3"/>
+                      <path d="M16 14a2 2 0 100-4 2 2 0 000 4z"/>
+                    </svg>
+                    <p>No wallets detected</p>
+                    <p className="auth-empty-hint">
+                      Install <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a> or another browser wallet to continue
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Option 2: Create free wallet — opens wizard */}
-            <div className="card p-4 text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-              <p className="mb-2">No wallet? No problem:</p>
-              <p>&#8226; Secured with Shamir Secret Sharing (3-of-5 threshold)</p>
-              <p>&#8226; No downloads, no seed phrase to manage</p>
-              <p>&#8226; Set up email recovery during onboarding</p>
+            {/* Info */}
+            <div className="auth-info">
+              <div className="auth-info-item">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+                <span>Message signature only — no transaction, no gas fee</span>
+              </div>
+              <div className="auth-info-item">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                <span>Your address becomes your sovereign identity</span>
+              </div>
             </div>
-            <button
-              onClick={handleStartCreateWallet}
-              disabled={isBusy}
-              className="w-full !py-3 !text-sm tracking-wider font-semibold rounded-lg border transition-colors"
-              style={{
-                opacity: isBusy ? 0.7 : 1,
-                borderColor: 'var(--refi-teal)',
-                color: 'var(--refi-teal)',
-                background: 'transparent',
-              }}
-            >
-              CREATE FREE WALLET
-            </button>
           </div>
         )}
 
-        {state.step === 'complete' && (
-          <div className="text-center py-12">
-            <div className="animate-pulse" style={{ color: 'var(--refi-teal)', fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>
-              Signing you in...
+        {/* ─── Create Wallet Tab ─── */}
+        {tab === 'create' && step !== 'onboarding' && (
+          <div className="auth-content">
+            <div className="auth-create-card">
+              <div className="auth-create-icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--refi-teal)" strokeWidth="1.5">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                  <path d="M9 12l2 2 4-4" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+              <h3 className="auth-create-title">Sovereign Cloud Wallet</h3>
+              <p className="auth-create-desc">
+                Get started instantly with a secure, self-custodial wallet — no browser extension required.
+              </p>
+              <div className="auth-create-features">
+                <div className="auth-feature">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--refi-teal)" strokeWidth="2">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                  <span>Shamir Secret Sharing (3-of-5 threshold)</span>
+                </div>
+                <div className="auth-feature">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--refi-teal)" strokeWidth="2">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                  <span>AES-256-GCM encrypted key storage</span>
+                </div>
+                <div className="auth-feature">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--refi-teal)" strokeWidth="2">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                  <span>Email recovery — no seed phrase needed</span>
+                </div>
+                <div className="auth-feature">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--refi-teal)" strokeWidth="2">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                  <span>Works across all supported networks</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setStep('onboarding')}
+                disabled={isBusy}
+                className="auth-create-btn"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <line x1="12" y1="8" x2="12" y2="16"/>
+                  <line x1="8" y1="12" x2="16" y2="12"/>
+                </svg>
+                Create Free Wallet
+              </button>
             </div>
           </div>
         )}
+
+        {/* Signing overlay */}
+        {signing && (
+          <div className="auth-signing-overlay">
+            <div className="auth-spinner-lg" />
+            <p>Check your wallet to sign the authentication message...</p>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="auth-footer">
+          <span>Sovereign infrastructure — your keys, your data</span>
+        </div>
       </div>
 
-      {/* Wallet Onboarding Wizard (modal overlay) */}
-      {state.step === 'onboarding' && (
+      {/* Wallet Onboarding Modal */}
+      {step === 'onboarding' && (
         <WalletOnboarding
-          chainId={state.chainId}
-          chainName={state.chainName}
-          onComplete={(token) => {
-            onComplete?.(token)
-          }}
-          onCancel={() => setState((s) => ({ ...s, step: 'connect' }))}
+          chainId={chainId}
+          chainName={chainName}
+          onComplete={(token) => { onComplete?.(token) }}
+          onCancel={() => { setStep('connect'); setTab('connect') }}
         />
       )}
     </>

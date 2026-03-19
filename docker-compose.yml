@@ -20,19 +20,31 @@ services:
       - INTERNAL_DB_URL=sqlite:////opt/refinet/data/internal.db
       - GRPC_PORT=50051
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile.dev
     ports:
-      - "3000:3000"
+      - "4000:4000"
     volumes:
       - ./frontend:/app
       - /app/node_modules
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
     command: npm run dev
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http = require('http'); http.get('http://localhost:4000', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   # ── Product Subdomains ──────────────────────────────────────────
   # Uncomment and configure when repos are integrated.
