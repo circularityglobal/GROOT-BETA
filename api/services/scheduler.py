@@ -322,6 +322,18 @@ def seed_default_tasks(db: Session):
             "schedule": "300",
             "handler_path": "api.services.scheduler.memory_cleanup_handler",
         },
+        {
+            "name": "api_counter_reset",
+            "task_type": "interval",
+            "schedule": "86400",
+            "handler_path": "api.services.scheduler.api_counter_reset_handler",
+        },
+        {
+            "name": "telemetry_prune",
+            "task_type": "interval",
+            "schedule": "86400",
+            "handler_path": "api.services.scheduler.telemetry_prune_handler",
+        },
     ]
 
     for d in defaults:
@@ -383,3 +395,51 @@ async def health_check_handler():
             int_db.commit()
         except Exception as e:
             logger.warning(f"Health check handler error: {e}")
+
+
+def api_counter_reset_handler():
+    """Reset daily API key request counters. Should run once per day."""
+    from api.database import get_public_session
+    from api.models.public import ApiKey
+    from datetime import date
+
+    today = date.today()
+    with get_public_session() as db:
+        keys = db.query(ApiKey).filter(
+            ApiKey.is_active == True,  # noqa: E712
+        ).all()
+
+        reset_count = 0
+        for key in keys:
+            last_reset = getattr(key, "last_reset_date", None)
+            if last_reset != today:
+                key.requests_today = 0
+                if hasattr(key, "last_reset_date"):
+                    key.last_reset_date = today
+                reset_count += 1
+
+        db.commit()
+        if reset_count:
+            logger.info(f"API counter reset: {reset_count} keys reset for {today}")
+
+
+def telemetry_prune_handler():
+    """Prune old IoT telemetry records beyond 30-day retention window."""
+    from api.database import get_public_session
+    from api.models.public import IoTTelemetry
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    with get_public_session() as db:
+        old_count = db.query(IoTTelemetry).filter(
+            IoTTelemetry.timestamp < cutoff,
+        ).count()
+
+        if old_count == 0:
+            return
+
+        db.query(IoTTelemetry).filter(
+            IoTTelemetry.timestamp < cutoff,
+        ).delete(synchronize_session=False)
+        db.commit()
+        logger.info(f"Telemetry prune: {old_count} records older than 30 days removed")

@@ -4,8 +4,8 @@ Discovers, executes, and tracks Python scripts for agents and admins.
 Scripts are Python files in scripts/ with a SCRIPT_META dict.
 """
 
+import ast
 import asyncio
-import importlib.util
 import json
 import logging
 import os
@@ -34,7 +34,7 @@ def discover_scripts() -> list[dict]:
     """
     scripts = []
 
-    for category_dir in ["ops", "analysis", "maintenance", "chain", "dapp"]:
+    for category_dir in ["ops", "analysis", "maintenance", "chain", "dapp", "seed"]:
         dir_path = SCRIPTS_DIR / category_dir
         if not dir_path.is_dir():
             continue
@@ -54,7 +54,10 @@ def discover_scripts() -> list[dict]:
 
 
 def _load_script_meta(path: Path) -> Optional[dict]:
-    """Load SCRIPT_META from a Python file without executing it."""
+    """
+    Load SCRIPT_META from a Python file using AST parsing.
+    Does NOT execute the module — safe static extraction only.
+    """
     try:
         with open(path) as f:
             content = f.read()
@@ -67,19 +70,21 @@ def _load_script_meta(path: Path) -> Optional[dict]:
                 "requires_admin": False,
             }
 
-        # Load the module to extract SCRIPT_META
-        spec = importlib.util.spec_from_file_location(f"script_{path.stem}", path)
-        module = importlib.util.module_from_spec(spec)
+        # Parse the file as AST — no code execution
+        tree = ast.parse(content, filename=str(path))
 
-        # Only extract SCRIPT_META, don't run the module's main
-        try:
-            spec.loader.exec_module(module)
-        except Exception:
-            pass
-
-        meta = getattr(module, "SCRIPT_META", None)
-        if isinstance(meta, dict):
-            return meta
+        for node in ast.iter_child_nodes(tree):
+            # Look for: SCRIPT_META = {...}
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "SCRIPT_META":
+                        # Safely evaluate the dict literal
+                        try:
+                            meta = ast.literal_eval(node.value)
+                            if isinstance(meta, dict):
+                                return meta
+                        except (ValueError, TypeError):
+                            pass
 
         return {
             "name": path.stem,
@@ -109,6 +114,11 @@ async def execute_script(
     if not script:
         return {"error": f"Script '{script_name}' not found"}
 
+    # Validate script path is within SCRIPTS_DIR (prevent path traversal)
+    script_path = Path(script["path"]).resolve()
+    if not str(script_path).startswith(str(SCRIPTS_DIR.resolve())):
+        return {"error": "Invalid script path"}
+
     # Check admin requirement
     if script.get("requires_admin") and not started_by:
         return {"error": "Admin authentication required"}
@@ -125,11 +135,14 @@ async def execute_script(
     db.add(execution)
     db.flush()
 
+    # Write audit log entry
+    _audit_script_execution(db, script_name, started_by, args)
+
     # Run the script
     start_time = time.time()
     try:
         result = await asyncio.get_event_loop().run_in_executor(
-            None, _run_script_sync, script["path"], args,
+            None, _run_script_sync, str(script_path), args,
         )
 
         duration_ms = int((time.time() - start_time) * 1000)
@@ -143,6 +156,7 @@ async def execute_script(
             "execution_id": execution.id,
             "status": "completed",
             "output": result.get("output", ""),
+            "stderr": result.get("stderr", ""),
             "duration_ms": duration_ms,
         }
 
@@ -169,8 +183,15 @@ def _run_script_sync(script_path: str, args: Optional[dict]) -> dict:
 
     cmd = [sys.executable, script_path]
 
-    # Pass args as JSON via environment variable
-    env = os.environ.copy()
+    # Build a minimal environment — don't leak all server env vars
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "PYTHONPATH": os.environ.get("PYTHONPATH", str(SCRIPTS_DIR.parent)),
+        "DATA_DIR": os.environ.get("DATA_DIR", ""),
+        "VIRTUAL_ENV": os.environ.get("VIRTUAL_ENV", ""),
+        "LANG": os.environ.get("LANG", "en_US.UTF-8"),
+    }
     if args:
         env["SCRIPT_ARGS"] = json.dumps(args)
 
@@ -184,9 +205,39 @@ def _run_script_sync(script_path: str, args: Optional[dict]) -> dict:
     )
 
     if result.returncode != 0:
-        raise RuntimeError(f"Script exited with code {result.returncode}: {result.stderr}")
+        error_msg = result.stderr.strip() or f"Script exited with code {result.returncode}"
+        raise RuntimeError(error_msg)
 
-    return {"output": result.stdout}
+    return {
+        "output": result.stdout,
+        "stderr": result.stderr,
+    }
+
+
+def _audit_script_execution(db: Session, script_name: str, started_by: Optional[str], args: Optional[dict]):
+    """Record script execution in the admin audit log."""
+    try:
+        from api.models.internal import AdminAuditLog
+        import uuid as _uuid
+
+        # Redact args values for audit (keep keys only)
+        safe_detail = f"script={script_name}"
+        if args:
+            safe_detail += f", arg_keys={list(args.keys())}"
+
+        audit = AdminAuditLog(
+            id=str(_uuid.uuid4()),
+            admin_user_id=started_by or "system",
+            action="script.execute",
+            target_type="script",
+            target_id=script_name,
+            detail=safe_detail,
+            timestamp=datetime.now(timezone.utc),
+        )
+        db.add(audit)
+        db.flush()
+    except Exception as e:
+        logger.warning(f"Failed to write audit log for script execution: {e}")
 
 
 # ── Execution History ────────────────────────────────────────────
@@ -195,13 +246,14 @@ def list_executions(
     db: Session,
     script_name: Optional[str] = None,
     limit: int = 20,
+    offset: int = 0,
 ) -> list[dict]:
     """List past script executions."""
     q = db.query(ScriptExecution)
     if script_name:
         q = q.filter(ScriptExecution.script_name == script_name)
 
-    executions = q.order_by(ScriptExecution.started_at.desc()).limit(limit).all()
+    executions = q.order_by(ScriptExecution.started_at.desc()).offset(offset).limit(limit).all()
 
     return [
         {

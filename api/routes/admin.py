@@ -550,12 +550,13 @@ def list_script_executions_route(
     request: Request,
     script_name: str = None,
     limit: int = 20,
+    offset: int = 0,
     int_db: Session = Depends(internal_db_dependency),
 ):
     """List past script execution history."""
     _require_admin(request, int_db)
     from api.services.script_runner import list_executions
-    return list_executions(int_db, script_name=script_name, limit=limit)
+    return list_executions(int_db, script_name=script_name, limit=limit, offset=offset)
 
 
 # ── Stats ──────────────────────────────────────────────────────────
