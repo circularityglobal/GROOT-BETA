@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Backfill embeddings for existing knowledge chunks.
-Run once after deploying semantic RAG support.
+Run after deploying semantic RAG support to populate missing embeddings.
 
-Usage: python3 scripts/backfill_embeddings.py
+Usage: python3 scripts/maintenance/backfill_embeddings.py
 """
 
 SCRIPT_META = {
@@ -15,16 +15,17 @@ SCRIPT_META = {
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from api.database import create_public_session
-from api.services.rag import backfill_embeddings
-
 
 def main():
+    from api.database import init_databases, create_public_session
+    from api.services.rag import backfill_embeddings
+
+    init_databases()
     db = create_public_session()
     try:
         total = 0
@@ -37,7 +38,11 @@ def main():
             print(f"  Backfilled {total} chunks so far...")
 
         db.commit()
-        print(f"Done. Total chunks with embeddings: {total}")
+        print(f"Done. Total chunks with embeddings backfilled: {total}")
+    except Exception as e:
+        db.rollback()
+        print(f"Error during embedding backfill: {e}")
+        sys.exit(1)
     finally:
         db.close()
 

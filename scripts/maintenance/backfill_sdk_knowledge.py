@@ -17,7 +17,7 @@ SCRIPT_META = {
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from api.database import init_databases, create_public_session
 from api.models.brain import ContractRepo, SDKDefinition

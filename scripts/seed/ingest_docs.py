@@ -50,9 +50,9 @@ DOC_FILES = [
 
 
 def find_project_root():
-    """Find the project root directory."""
+    """Find the project root directory (two levels up from scripts/seed/)."""
     d = os.path.dirname(os.path.abspath(__file__))
-    return os.path.dirname(d)
+    return os.path.dirname(os.path.dirname(d))
 
 
 def load_doc_files():

@@ -247,7 +247,7 @@ def seed_via_api(api_url: str, token: str):
 
 def seed_via_local():
     """Seed knowledge base via direct database access (no HTTP)."""
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
     from api.database import get_public_db
     from api.services.rag import ingest_document

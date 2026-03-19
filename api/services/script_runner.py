@@ -218,7 +218,6 @@ def _audit_script_execution(db: Session, script_name: str, started_by: Optional[
     """Record script execution in the admin audit log."""
     try:
         from api.models.internal import AdminAuditLog
-        import uuid as _uuid
 
         # Redact args values for audit (keep keys only)
         safe_detail = f"script={script_name}"
@@ -226,13 +225,12 @@ def _audit_script_execution(db: Session, script_name: str, started_by: Optional[
             safe_detail += f", arg_keys={list(args.keys())}"
 
         audit = AdminAuditLog(
-            id=str(_uuid.uuid4()),
-            admin_user_id=started_by or "system",
-            action="script.execute",
+            id=str(uuid.uuid4()),
+            admin_username=started_by or "system",
+            action="EXECUTE_SCRIPT",
             target_type="script",
             target_id=script_name,
-            detail=safe_detail,
-            timestamp=datetime.now(timezone.utc),
+            details=safe_detail,
         )
         db.add(audit)
         db.flush()

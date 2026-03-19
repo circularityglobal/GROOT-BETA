@@ -432,14 +432,14 @@ def telemetry_prune_handler():
     cutoff = datetime.now(timezone.utc) - timedelta(days=30)
     with get_public_session() as db:
         old_count = db.query(IoTTelemetry).filter(
-            IoTTelemetry.timestamp < cutoff,
+            IoTTelemetry.received_at < cutoff,
         ).count()
 
         if old_count == 0:
             return
 
         db.query(IoTTelemetry).filter(
-            IoTTelemetry.timestamp < cutoff,
+            IoTTelemetry.received_at < cutoff,
         ).delete(synchronize_session=False)
         db.commit()
         logger.info(f"Telemetry prune: {old_count} records older than 30 days removed")
