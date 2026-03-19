@@ -65,6 +65,7 @@ async def lifespan(app: FastAPI):
     # WebSocket broadcast for real-time UI updates
     bus.subscribe("registry.*", ws_manager.broadcast_event)
     bus.subscribe("messaging.*", ws_manager.broadcast_event)
+    bus.subscribe("system.*", ws_manager.broadcast_event)
     # Webhook delivery for all event types
     bus.subscribe("registry.*", deliver_bus_event)
     bus.subscribe("messaging.*", deliver_bus_event)
@@ -127,76 +128,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logging.getLogger("refinet").warning(f"gRPC server not started: {e}")
 
-    # ── Start P2P cleanup task ────────────────────────────────────
-    async def _p2p_cleanup_loop():
-        from api.services.p2p import P2PNetwork
-        while True:
-            await asyncio.sleep(60)
-            try:
-                P2PNetwork.get().cleanup_stale_peers()
-            except Exception:
-                pass
-
-    _cleanup_task = asyncio.create_task(_p2p_cleanup_loop())
-
-    # ── Start uptime monitor ──────────────────────────────────────
-    async def _monitor_loop():
-        from api.services.monitor import run_health_check
-        from api.database import get_internal_session
-        while True:
-            await asyncio.sleep(60)
-            try:
-                int_db = next(get_internal_session())
-                try:
-                    await run_health_check(int_db)
-                    int_db.commit()
-                finally:
-                    int_db.close()
-            except Exception as e:
-                logging.getLogger("refinet").error(f"Monitor error: {e}")
-
-    _monitor_task = asyncio.create_task(_monitor_loop())
-
-    # ── Auth cleanup task (nonces + refresh tokens) ─────────────────
-    async def _auth_cleanup_loop():
-        from api.auth.siwe import cleanup_expired_nonces
-        from api.auth.jwt import cleanup_expired_refresh_tokens
-        from api.database import get_public_session
-        while True:
-            await asyncio.sleep(3600)  # Every hour
-            try:
-                with get_public_session() as db:
-                    nonces = cleanup_expired_nonces(db)
-                    tokens = cleanup_expired_refresh_tokens(db)
-                    db.commit()
-                    if nonces or tokens:
-                        logging.getLogger("refinet").info(
-                            f"Auth cleanup: {nonces} nonces, {tokens} refresh tokens removed"
-                        )
-            except Exception as e:
-                logging.getLogger("refinet").error(f"Auth cleanup error: {e}")
-
-    _auth_cleanup_task = asyncio.create_task(_auth_cleanup_loop())
-
-    # ── Agent memory cleanup task ──────────────────────────────────
-    async def _memory_cleanup_loop():
-        from api.services.agent_memory import cleanup_expired_working
-        from api.database import get_public_session
-        while True:
-            await asyncio.sleep(300)  # Every 5 minutes
-            try:
-                with get_public_session() as db:
-                    cleaned = cleanup_expired_working(db)
-                    db.commit()
-                    if cleaned:
-                        logging.getLogger("refinet").info(f"Agent memory cleanup: {cleaned} expired entries removed")
-            except Exception as e:
-                logging.getLogger("refinet").error(f"Agent memory cleanup error: {e}")
-
-    _memory_cleanup_task = asyncio.create_task(_memory_cleanup_loop())
-    logging.getLogger("refinet").info("Uptime monitor + agent memory cleanup started")
-
     # ── Start configurable task scheduler ──────────────────────────
+    # The scheduler handles all periodic tasks (p2p_cleanup, health_monitor,
+    # auth_cleanup, agent_memory_cleanup) via seeded ScheduledTask entries.
+    # No duplicate hardcoded loops needed.
     try:
         from api.services.scheduler import TaskScheduler, seed_default_tasks
         from api.database import get_internal_session as _get_int_session
@@ -218,10 +153,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────
-    _cleanup_task.cancel()
-    _monitor_task.cancel()
     _webhook_task.cancel()
-    _memory_cleanup_task.cancel()
     if _scheduler_task:
         try:
             from api.services.scheduler import TaskScheduler
@@ -248,7 +180,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="REFINET Cloud",
         description="Grass Root Project Intelligence — Sovereign AI Infrastructure",
-        version="2.0.0",
+        version="3.0.0",
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc",

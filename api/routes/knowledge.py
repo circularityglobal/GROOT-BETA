@@ -80,8 +80,8 @@ def _check_user_quota(user_id: str, file_size: int, db: Session, int_db: Session
 async def _emit_knowledge_event(event: str, data: dict):
     """Publish a knowledge event to the EventBus for reactive processing."""
     try:
-        from api.services.event_bus import bus
-        await bus.publish(event, data)
+        from api.services.event_bus import EventBus
+        await EventBus.get().publish(event, data)
     except Exception:
         pass  # Event emission should never block the main operation
 

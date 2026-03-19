@@ -19,6 +19,19 @@ from api.schemas.registry import (
 router = APIRouter(prefix="/registry", tags=["registry"])
 
 
+# ── Event Publishing Helper ──────────────────────────────────────────
+
+def _fire_registry_event(event: str, data: dict):
+    """Fire-and-forget registry event to the EventBus (non-blocking)."""
+    import asyncio
+    try:
+        from api.services.event_bus import EventBus
+        loop = asyncio.get_running_loop()
+        loop.create_task(EventBus.get().publish(event, data))
+    except Exception:
+        pass  # Event emission should never block registry operations
+
+
 # ── Auth Helpers ─────────────────────────────────────────────────────
 
 def _get_current_user(request: Request, db: Session) -> tuple:
@@ -101,6 +114,10 @@ def create_project(
             website_url=req.website_url,
             repo_url=req.repo_url,
         )
+        _fire_registry_event("registry.project.created", {
+            "project_id": project.id, "slug": project.slug,
+            "name": project.name, "owner": username,
+        })
         return {
             "id": project.id,
             "slug": project.slug,
@@ -167,6 +184,9 @@ def update_project(
         project = registry_service.update_project(db, slug, user_id, **update_data)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found or not owned by you")
+        _fire_registry_event("registry.project.updated", {
+            "slug": project.slug, "changes": list(update_data.keys()),
+        })
         return {"slug": project.slug, "message": "Project updated"}
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -181,6 +201,7 @@ def delete_project(
     user_id, _ = _require_write(request, db)
     if not registry_service.delete_project(db, slug, user_id):
         raise HTTPException(status_code=404, detail="Project not found or not owned by you")
+    _fire_registry_event("registry.project.deleted", {"slug": slug})
     return {"message": "Project deleted"}
 
 
@@ -211,6 +232,10 @@ def add_abi(
     )
     if not abi:
         raise HTTPException(status_code=403, detail="Not authorized to modify this project")
+    _fire_registry_event("registry.abi.added", {
+        "project_slug": slug, "abi_id": abi.id,
+        "contract_name": abi.contract_name, "chain": req.chain,
+    })
     return {"id": abi.id, "contract_name": abi.contract_name, "message": "ABI added"}
 
 
@@ -304,6 +329,10 @@ def add_sdk(
     )
     if not sdk:
         raise HTTPException(status_code=403, detail="Not authorized to modify this project")
+    _fire_registry_event("registry.sdk.published", {
+        "project_slug": slug, "sdk_id": sdk.id, "name": sdk.name,
+        "language": req.language,
+    })
     return {"id": sdk.id, "name": sdk.name, "message": "SDK added"}
 
 
@@ -493,6 +522,8 @@ def toggle_star(
 
     try:
         is_starred = registry_service.toggle_star(db, user_id, project_data["id"])
+        event = "registry.project.starred" if is_starred else "registry.project.unstarred"
+        _fire_registry_event(event, {"slug": slug, "user_id": user_id})
         return {"starred": is_starred, "stars_count": project_data["stars_count"] + (1 if is_starred else -1)}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -508,6 +539,10 @@ def fork_project(
     forked = registry_service.fork_project(db, slug, user_id, username)
     if not forked:
         raise HTTPException(status_code=404, detail="Source project not found")
+    _fire_registry_event("registry.project.forked", {
+        "source_slug": slug, "forked_slug": forked.slug,
+        "forked_by": username,
+    })
     return {"id": forked.id, "slug": forked.slug, "message": "Project forked successfully"}
 
 
