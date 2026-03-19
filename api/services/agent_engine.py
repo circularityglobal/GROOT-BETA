@@ -381,6 +381,28 @@ Keep the plan concise (1-5 steps). Use available tools when helpful."""
                 step_result.result = {"content": result.get("content", "")}
                 step_result.tokens_used = result.get("prompt_tokens", 0) + result.get("completion_tokens", 0)
 
+            elif action in ("deploy_contract", "compile_contract", "compile_test"):
+                # Pipeline dispatch — wizard worker pipeline
+                step_result.tool_name = action
+                step_result.tool_args = args
+                try:
+                    from api.services.dag_orchestrator import create_pipeline
+                    pipeline_type = {"deploy_contract": "deploy", "compile_contract": "compile_test",
+                                     "compile_test": "compile_test"}.get(action, "compile_test")
+                    pipeline = create_pipeline(
+                        self.db, self.user_id, pipeline_type,
+                        config=args, agent_task_id=task.id,
+                    )
+                    self.db.flush()
+                    step_result.result = {
+                        "pipeline_id": pipeline.id,
+                        "pipeline_type": pipeline.pipeline_type,
+                        "status": pipeline.status,
+                        "message": f"Pipeline '{pipeline_type}' created — runs asynchronously",
+                    }
+                except Exception as e:
+                    step_result.error = str(e)
+
             elif self._is_tool_allowed(action):
                 # Tool execution via MCP gateway
                 step_result.tool_name = action

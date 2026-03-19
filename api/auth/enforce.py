@@ -10,6 +10,8 @@ Auth Layers:
 For sensitive operations (API keys, provider keys, secrets), ALL THREE layers must be complete.
 """
 
+from typing import Optional, Tuple
+
 from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session
 
@@ -20,8 +22,8 @@ from api.models.public import User
 def require_full_auth(
     request: Request,
     db: Session,
-    scope: str | None = None,
-) -> tuple[str, User]:
+    scope: Optional[str] = None,
+) -> Tuple[str, User]:
     """
     Enforce that the user has completed ALL three auth layers:
       1. Email + Password (auth_layer_1_complete)
@@ -89,8 +91,8 @@ def require_full_auth(
 def require_authenticated(
     request: Request,
     db: Session,
-    scope: str | None = None,
-) -> tuple[str, User]:
+    scope: Optional[str] = None,
+) -> Tuple[str, User]:
     """
     Basic auth check — requires valid JWT and active user.
     Does NOT enforce auth layers. Use for non-sensitive operations.

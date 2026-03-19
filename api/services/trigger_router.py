@@ -46,6 +46,10 @@ TRIGGER_MAP: dict[str, str] = {
     "knowledge.document.*": "knowledge-curator",
     "agent.task.completed": "orchestrator",
     "system.health.*": "maintenance",
+    "pipeline.run.completed": "orchestrator",
+    "pipeline.run.failed": "orchestrator",
+    "pipeline.approval.needed": "orchestrator",
+    "broker.session.*": "orchestrator",
 }
 
 # Rate limiting: track last trigger time per agent archetype
@@ -239,4 +243,8 @@ def _infer_source(event_type: str) -> str:
         return "heartbeat"
     elif event_type.startswith("agent."):
         return "cron"
+    elif event_type.startswith("pipeline."):
+        return "webhook"
+    elif event_type.startswith("broker."):
+        return "webhook"
     return "webhook"

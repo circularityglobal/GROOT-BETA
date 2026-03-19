@@ -605,3 +605,38 @@ def get_user_starred(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return registry_service.get_user_stars(db, user.id, page=page, page_size=page_size)
+
+
+# ── Tag Taxonomy ──────────────────────────────────────────────────
+
+@router.get("/tags")
+def get_tag_taxonomy():
+    """Get the full tag taxonomy for contract classification."""
+    from api.services.tag_taxonomy import get_taxonomy
+    return get_taxonomy()
+
+
+@router.get("/tags/suggest")
+def suggest_contract_tags(
+    description: str = Query("", description="Contract description text"),
+    db: Session = Depends(public_db_dependency),
+):
+    """Suggest tags for a contract based on its description."""
+    from api.services.tag_taxonomy import suggest_tags
+    return {"tags": suggest_tags(description)}
+
+
+@router.get("/search-by-tags")
+def search_by_tags_route(
+    tags: str = Query("", description="Comma-separated tags to search for"),
+    chain: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(public_db_dependency),
+):
+    """Search registry projects by tags."""
+    from api.services.tag_taxonomy import search_by_tags
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    if not tag_list:
+        return []
+    return search_by_tags(db, tag_list, chain=chain, limit=limit, offset=offset)

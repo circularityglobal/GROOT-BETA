@@ -27,3 +27,12 @@ from api.models.agent_engine import (  # noqa: F401
     AgentMemorySemantic, AgentMemoryProcedural,
     AgentTask, AgentDelegation,
 )
+from api.models.pipeline import (  # noqa: F401
+    PipelineRun, PipelineStep, PendingAction, DeploymentRecord,
+)
+from api.models.payments import (  # noqa: F401
+    FeeSchedule, PaymentRecord, Subscription, RevenueSplit,
+)
+from api.models.broker import (  # noqa: F401
+    BrokerSession, BrokerFeeConfig,
+)

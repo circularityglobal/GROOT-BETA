@@ -386,6 +386,8 @@ class DAppBuild(PublicBase):
     status = Column(String, default="building")          # building | ready | failed
     output_filename = Column(String, nullable=True)      # Generated zip filename
     error_message = Column(Text, nullable=True)
+    validation_status = Column(String, nullable=True)        # pending | passed | passed_with_warnings | failed | repaired | repair_failed
+    validation_errors = Column(Text, nullable=True)          # JSON: { errors: [], warnings: [] }
     created_at = Column(DateTime, server_default=func.now())
     completed_at = Column(DateTime, nullable=True)
 

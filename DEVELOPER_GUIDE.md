@@ -6,13 +6,13 @@ Start here. This guide gets you from zero to productive.
 
 ## What is REFINET Cloud?
 
-REFINET Cloud is a sovereign AI platform for the Regenerative Finance Network. It combines free AI inference (BitNet), a multi-agent autonomous engine, smart contract registry, DApp factory, app store, encrypted messaging, and IoT connectivity — all on permanently free Oracle Cloud infrastructure.
+REFINET Cloud is a sovereign AI platform for the Regenerative Finance Network. It combines free AI inference (BitNet), a multi-agent autonomous engine, smart contract registry, DApp factory, app store, encrypted messaging, IoT connectivity, a wizard pipeline for on-chain contract deployment, a broker system for paid services, and a payment engine — all on permanently free Oracle Cloud infrastructure.
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Backend | FastAPI + SQLAlchemy 2.0 + SQLite (WAL mode) |
+| Backend | FastAPI + SQLAlchemy 2.0 + SQLite (WAL mode, 69 tables across 2 databases) |
 | Inference | BitNet b1.58 via bitnet.cpp (CPU-native, ARM-optimized) |
 | Multi-Provider | BitNet → Gemini → Ollama → LM Studio → OpenRouter fallback |
 | RAG | sentence-transformers (384-dim) + FTS5 full-text search |
@@ -67,37 +67,51 @@ groot/
 │   ├── main.py                    # App factory, router registration, lifespan
 │   ├── config.py                  # Settings (env vars + YAML hierarchy)
 │   ├── database.py                # SQLAlchemy sessions (public.db + internal.db)
-│   ├── auth/                      # 12 auth modules (SIWE, JWT, API keys, TOTP, etc.)
+│   ├── auth/                      # Auth modules (SIWE, JWT, API keys, TOTP, enforce)
 │   ├── middleware/                # CORS, rate limiting, request logging, protocol auth
-│   ├── models/                    # SQLAlchemy ORM (7 model files, 50+ tables)
-│   ├── routes/                    # 25 route files, 210+ endpoints
+│   ├── models/                    # SQLAlchemy ORM (9 model files, 69 tables)
+│   │   ├── public.py              # User-facing tables (users, keys, devices, apps, wallets)
+│   │   ├── internal.py            # Admin/secrets tables (wallets, config, audit)
+│   │   ├── agent_engine.py        # SOUL, 4-tier memory, tasks, delegation
+│   │   ├── registry.py            # Contract projects, ABIs, SDKs, stars, forks
+│   │   ├── knowledge.py           # Documents, chunks, contract definitions
+│   │   ├── brain.py               # Personal contract repositories
+│   │   ├── pipeline.py            # Pipeline runs, steps, pending actions, deployments
+│   │   ├── payments.py            # Fee schedules, payments, subscriptions, revenue splits
+│   │   └── broker.py              # Broker sessions, fee configs
+│   ├── routes/                    # 27 route files, 287 endpoints
 │   ├── schemas/                   # Pydantic request/response schemas
-│   ├── services/                  # 64 service modules (business logic)
+│   ├── services/                  # 61+ service modules (business logic)
 │   │   ├── providers/             # Model provider plugins (BitNet, Gemini, Ollama, etc.)
 │   │   ├── agent_engine.py        # 6-phase cognitive loop
 │   │   ├── agent_soul.py          # 7-layer context injection stack
 │   │   ├── agent_memory.py        # 4-tier memory system
 │   │   ├── trigger_router.py      # Event → agent task routing
 │   │   ├── output_router.py       # Task result → multi-target routing
-│   │   ├── token_budget.py        # Context window token management
-│   │   ├── context_loader.py      # Cached filesystem doc loader
-│   │   ├── rag.py                 # Retrieval-Augmented Generation
+│   │   ├── dag_orchestrator.py    # DAG pipeline coordinator (compile→test→deploy)
+│   │   ├── wizard_workers.py      # 6 deterministic on-chain workers
+│   │   ├── ownership.py           # Contract deployment tracking + ownership transfer
+│   │   ├── payment_service.py     # Fees, payments, subscriptions, revenue splits
+│   │   ├── broker.py              # Brokered session lifecycle
+│   │   ├── xmtp.py                # XMTP protocol wrapper (fallback to internal messaging)
+│   │   ├── dapp_validator.py      # DApp build validation + self-repair
+│   │   ├── tag_taxonomy.py        # 11-category tag ontology for contract discovery
 │   │   ├── gateway.py             # Universal model gateway
+│   │   ├── rag.py                 # Retrieval-Augmented Generation
 │   │   ├── mcp_gateway.py         # MCP tool dispatcher
 │   │   ├── scheduler.py           # Cron/interval task scheduler
 │   │   ├── event_bus.py           # In-process pub/sub
 │   │   ├── webhook_delivery.py    # HMAC-signed webhook delivery
 │   │   ├── chain_listener.py      # On-chain event polling
-│   │   ├── messenger_bridge.py    # Telegram/WhatsApp bridges
 │   │   ├── sandbox.py             # Docker container isolation
-│   │   ├── jsonl_logger.py        # JSONL episodic audit trail
-│   │   └── workers.py             # 5 deterministic background workers
+│   │   ├── workers.py             # 5 deterministic background workers
+│   │   └── wallet_service.py      # Custodial wallets with Shamir SSS
 │   ├── grpc/                      # gRPC server (port 50051)
-│   └── tests/                     # 10 test files
+│   └── tests/                     # 10 test files, 212 test cases
 │
 ├── frontend/                      # Next.js 14 frontend
-│   ├── app/                       # 16 page directories
-│   ├── components/                # 17 component directories
+│   ├── app/                       # Page directories
+│   ├── components/                # Component directories
 │   └── lib/                       # API client, config, wallet
 │
 ├── configs/                       # YAML configuration hierarchy
@@ -109,18 +123,19 @@ groot/
 │   ├── analyze-telemetry/
 │   └── summarize-contract/
 │
-├── docs/                          # Technical documentation
-│   ├── ARCHITECTURE.md            # System architecture deep dive
-│   ├── AGENT_ENGINE.md            # Agent engine specification
-│   ├── API_REFERENCE.md           # Complete API reference
-│   ├── APP_STORE.md               # App store pipeline
-│   ├── SAFETY.md                  # Safety constraints (detailed)
-│   ├── SOUL_FORMAT.md             # SOUL.md format specification
-│   ├── HEARTBEAT.md               # Health monitoring (detailed)
-│   └── GROOT_INTELLIGENCE_WHITEPAPER.md
+├── scripts/                       # 36 scripts across 6 categories
+│   ├── analysis/                  # 4 scripts (coverage, stats, reports)
+│   ├── chain/                     # 3 scripts (fetch ABI, monitor, read contract)
+│   ├── dapp/                      # 5 scripts (build web/python, package, list templates)
+│   ├── maintenance/               # 10 scripts (cleanup, backup, rotate, rebuild)
+│   ├── ops/                       # 10 scripts (git ops, deploy, health, DB stats)
+│   └── seed/                      # 4 scripts (contracts, knowledge, docs, fee schedules)
 │
-├── scripts/                       # Admin, analysis, maintenance, seed scripts
-├── migrations/                    # SQL schema migrations (9 files)
+├── migrations/                    # SQL schema migrations (13 public + 1 internal)
+│   ├── public/                    # 001-013: user-facing schema
+│   └── internal/                  # 001: scheduler + script tables
+│
+├── docs/                          # Technical documentation (10 files)
 ├── nginx/                         # Nginx config for production
 └── docker-compose.yml             # Development environment
 ```
@@ -146,12 +161,15 @@ Every inference call passes through a context assembly pipeline that injects 7 l
 Total: 1,536 usable tokens out of BitNet's 2,048 context window (512 reserved for completion).
 
 ### 3. Trigger Router
-Events from 5 sources (heartbeat, cron, webhook, chain, messenger) are normalized into agent tasks via the trigger router:
+Events from 7 sources (heartbeat, cron, webhook, chain, messenger, pipeline, broker) are normalized into agent tasks via the trigger router:
 ```
-device.telemetry.*  → device-monitor agent
-chain.event.*       → contract-watcher agent
-knowledge.document.* → knowledge-curator agent
-system.health.*     → maintenance agent
+device.telemetry.*     → device-monitor agent
+chain.event.*          → contract-watcher agent
+knowledge.document.*   → knowledge-curator agent
+system.health.*        → maintenance agent
+pipeline.run.completed → orchestrator agent
+pipeline.approval.needed → orchestrator agent
+broker.session.*       → orchestrator agent
 ```
 
 ### 4. Output Router
@@ -169,12 +187,34 @@ BitNet (sovereign, free) → Gemini (free tier) → Ollama (local) → LM Studio
 ```
 Users can also bring their own API keys for any OpenAI-compatible provider.
 
-### 6. Event Bus
+### 6. Wizard Pipeline (DAG Orchestrator)
+On-chain operations are coordinated by a DAG orchestrator with 3 pipeline templates:
+
+```
+compile_test:  [compile] → [test]
+deploy:        [compile] → [test] → [rbac_check] → [deploy] → [verify]
+full:          [compile] → [test] → [rbac_check] → [deploy] → [verify] → [transfer_ownership]
+```
+
+Each step is a deterministic worker. The `rbac_check` step can pause the pipeline and create a PendingAction for admin approval before proceeding with mainnet deployments.
+
+### 7. Event Bus
 In-process pub/sub with wildcard pattern matching. All subsystems communicate via events:
 ```python
 bus.subscribe("chain.*", handler)          # All chain events
-bus.subscribe("agent.task.completed", h)   # Specific event
+bus.subscribe("pipeline.run.completed", h) # Specific event
+bus.subscribe("broker.session.*", h)       # All broker events
 await bus.publish("registry.sdk.created", data)
+```
+
+### 8. Payment & Revenue
+Fee schedules define per-service pricing with tier-based discounts. Revenue splits distribute payments between platform, developer, and broker:
+```python
+# Fee calculation respects user tier
+fee = get_fee(db, "deploy", user_tier="developer")
+
+# Revenue split: platform 50% / developer 50%
+execute_revenue_split(db, payment_id)
 ```
 
 ## Development Workflow
@@ -202,17 +242,30 @@ await bus.publish("registry.sdk.created", data)
 1. Add to `configs/default.yaml` with a sensible default
 2. Access in code: `from api.config import get_yaml_value; val = get_yaml_value("section.key", default)`
 
+### Adding a wizard worker
+1. Add the worker function to `api/services/wizard_workers.py` following the existing pattern
+2. Register it in `WORKER_DISPATCH` dict in `api/services/dag_orchestrator.py`
+3. Add the step to the pipeline template in `PIPELINE_TEMPLATES`
+
+### Adding a new execution script
+1. Create `scripts/<category>/my_script.py` with `SCRIPT_META` dict and `main()` function
+2. Scripts are auto-discovered by `script_runner.py` — no registration needed
+
 ## Testing
 
 ```bash
-# Run all agent engine tests (always pass)
+# Run all tests (207 pass, 5 known pre-existing failures)
+python3 -m pytest api/tests/ -v
+
+# Run agent engine tests only (18/18 pass)
 python3 -m pytest api/tests/test_agent_engine.py -v
 
 # Run specific test file
 python3 -m pytest api/tests/test_webhooks.py -v
 
-# Run all tests (some require Python 3.10+ due to auth/enforce.py)
-python3 -m pytest api/tests/ -v
+# Verify all imports (quick smoke test)
+python3 -c "import api.models; print('Models OK')"
+python3 -c "from api.services.dag_orchestrator import PIPELINE_TEMPLATES; print(f'Pipelines: {list(PIPELINE_TEMPLATES.keys())}')"
 ```
 
 ## Documentation Index
@@ -223,6 +276,7 @@ python3 -m pytest api/tests/ -v
 | `README.md` | Platform overview and feature list |
 | `GROOT.md` | Master architecture document with constraints and rules |
 | `DEPLOY_ORACLE_CLOUD.md` | Step-by-step production deployment |
+| `CHANGELOG.md` | Version history and release notes |
 | `docs/ARCHITECTURE.md` | Technical architecture deep dive |
 | `docs/AGENT_ENGINE.md` | Agent engine specification |
 | `docs/API_REFERENCE.md` | Complete API endpoint reference |
@@ -231,6 +285,4 @@ python3 -m pytest api/tests/ -v
 | `docs/SOUL_FORMAT.md` | Agent SOUL.md format specification |
 | `docs/HEARTBEAT.md` | Health monitoring and scheduled tasks |
 | `docs/GROOT_INTELLIGENCE_WHITEPAPER.md` | Vision and technical whitepaper |
-| `scripts/README.md` | Script documentation and usage |
-| `frontend/README.md` | Frontend structure and development |
 | `configs/README.md` | YAML configuration hierarchy |

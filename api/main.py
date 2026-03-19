@@ -113,6 +113,12 @@ async def lifespan(app: FastAPI):
     # Agent events — task completion, delegation → WS broadcast + webhook delivery
     bus.subscribe("agent.*", ws_manager.broadcast_event)
     bus.subscribe("agent.*", deliver_bus_event)
+    # Pipeline events — step completion, approval needed, run complete → WS + webhooks
+    bus.subscribe("pipeline.*", ws_manager.broadcast_event)
+    bus.subscribe("pipeline.*", deliver_bus_event)
+    # Broker events — session lifecycle → WS + webhooks
+    bus.subscribe("broker.*", ws_manager.broadcast_event)
+    bus.subscribe("broker.*", deliver_bus_event)
     # Trigger router — maps events to agent tasks automatically
     from api.services.trigger_router import register_all_triggers
     register_all_triggers(bus)
@@ -251,6 +257,22 @@ def create_app() -> FastAPI:
     # ── Chain Event Routes ─────────────────────────────────────────
     from api.routes.chain import router as chain_router
     app.include_router(chain_router)
+
+    # ── Pipeline Routes (Wizard Workers) ───────────────────────────
+    from api.routes.pipeline import router as pipeline_router
+    app.include_router(pipeline_router)
+
+    # ── Deployment Tracking Routes ─────────────────────────────────
+    from api.routes.deployments import router as deployments_router
+    app.include_router(deployments_router)
+
+    # ── Payment & Subscription Routes ──────────────────────────────
+    from api.routes.payments import router as payments_router
+    app.include_router(payments_router)
+
+    # ── Broker Routes ──────────────────────────────────────────────
+    from api.routes.broker import router as broker_router
+    app.include_router(broker_router)
 
     # ── DApp Factory Routes ───────────────────────────────────────
     from api.routes.dapp import router as dapp_router

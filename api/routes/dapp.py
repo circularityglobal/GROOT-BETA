@@ -3,6 +3,8 @@ REFINET Cloud — DApp Factory Routes
 Template browsing, DApp assembly, and download.
 """
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -69,6 +71,7 @@ def build_dapp(
         abi_json=body.get("abi_json"),
         project_id=body.get("project_id"),
     )
+    db.commit()
 
     return {
         "build_id": build.id,
@@ -122,7 +125,6 @@ def download_dapp(
     if build.status != "ready":
         raise HTTPException(status_code=400, detail=f"Build not ready (status: {build.status})")
 
-    import json
     config = json.loads(build.config_json) if build.config_json else {}
 
     zip_bytes = generate_dapp_zip(
@@ -139,3 +141,48 @@ def download_dapp(
             "Content-Disposition": f'attachment; filename="{build.output_filename}"',
         },
     )
+
+
+@router.get("/builds/{build_id}/validation")
+def get_validation_status(
+    build_id: str,
+    request: Request,
+    db: Session = Depends(public_db_dependency),
+):
+    """Get validation status for a DApp build."""
+    user_id = _get_user_id(request, db)
+    build = db.query(DAppBuild).filter(
+        DAppBuild.id == build_id,
+        DAppBuild.user_id == user_id,
+    ).first()
+    if not build:
+        raise HTTPException(status_code=404, detail="Build not found")
+
+    return {
+        "build_id": build.id,
+        "validation_status": build.validation_status,
+        "validation_errors": json.loads(build.validation_errors) if build.validation_errors else None,
+    }
+
+
+@router.post("/builds/{build_id}/validate")
+def validate_build(
+    build_id: str,
+    request: Request,
+    db: Session = Depends(public_db_dependency),
+):
+    """Run validation on a DApp build (npm install + tsc check)."""
+    user_id = _get_user_id(request, db)
+    build = db.query(DAppBuild).filter(
+        DAppBuild.id == build_id,
+        DAppBuild.user_id == user_id,
+    ).first()
+    if not build:
+        raise HTTPException(status_code=404, detail="Build not found")
+    if build.status != "ready":
+        raise HTTPException(status_code=400, detail=f"Build not ready (status: {build.status})")
+
+    from api.services.dapp_validator import validate_dapp
+    result = validate_dapp(db, build_id)
+    db.commit()
+    return result
