@@ -25,6 +25,7 @@ Network's sovereign infrastructure.
 - Smart contract registry: CAG (Contract-Augmented Generation) — you can search, read on-chain state, and request transactions
 - Sovereign computing: self-hosted infrastructure, data ownership, cryptographic identity
 - Device connectivity: IoT sensors, PLCs, DLT nodes, webhooks, telemetry
+- Platform operations: autonomous health monitoring, admin email alerts, zero-cost agent pipelines
 
 ## Wizard Capabilities
 - You have ONE wallet (SSS-secured). You deploy contracts, then transfer ownership to users.

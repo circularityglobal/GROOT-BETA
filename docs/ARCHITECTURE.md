@@ -272,7 +272,62 @@ max_iter = get_yaml_value("orchestration.max_iterations", 5)
 
 ---
 
-## 10. Database Architecture
+## 10. Autonomous Platform Operations
+
+The `skills/refinet-platform-ops/` skill enables fully autonomous platform oversight with zero recurring cost.
+
+### Zero-Cost Agent Execution Stack
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    TRIGGER LAYER                         │
+│  Heartbeat (60s) │ Cron │ Webhook │ Chain │ Messenger   │
+└─────────────┬───────────────────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────────────────┐
+│                  ORCHESTRATION LAYER                     │
+│  Claude Code CLI (claude -p)  ←  FREE, unlimited local  │
+│  ↓ falls back to ↓                                      │
+│  Ollama (phi3-mini / llama3)  ←  FREE, local CPU        │
+│  ↓ falls back to ↓                                      │
+│  BitNet b1.58 2B4T            ←  FREE, CPU-native ARM   │
+│  ↓ falls back to ↓                                      │
+│  Gemini Flash (free tier)     ←  FREE, 15 RPM           │
+└─────────────┬───────────────────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────────────────┐
+│              FILE-BASED AGENT MEMORY                     │
+│  memory/working/{agent}.json   ← latest state           │
+│  memory/episodic/{agent}.jsonl ← append-only audit      │
+│  memory/semantic/*.json        ← learned facts           │
+│  memory/procedural/*.json      ← tool-use patterns       │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Installed Agent Skills (3 of 4)
+
+| Skill | Agent | Purpose | Key Script |
+|-------|-------|---------|------------|
+| `skills/refinet-platform-ops/` | platform-ops | Health monitoring, admin alerts, pipeline orchestration | `health_check.py`, `run_agent.sh` |
+| `skills/refinet-knowledge-curator/` | knowledge-curator | RAG/CAG maintenance, orphan repair, drift detection | `knowledge_health.py` |
+| `skills/refinet-contract-watcher/` | contract-watcher | ABI security scanning, event interpretation, bridge correlation | `contract_scan.py` |
+
+All 3 agents share the same `run_agent.sh` zero-cost LLM fallback chain from platform-ops.
+
+### Admin Email Alerts
+
+8+ alert categories via self-hosted SMTP (port 8025):
+- **Platform Ops**: HEALTH, SECURITY, AGENT, DEPLOY, CHAIN, REGISTRY, KNOWLEDGE, MAINTENANCE
+- **Knowledge Curator**: INGESTION, ORPHAN, PRUNE, CAG_SYNC, DRIFT, DIGEST
+- **Contract Watcher**: ABI_SECURITY, EVENT_ANOMALY, ACTIVITY_ALERT, BRIDGE_ALERT, WEEKLY_REPORT
+
+See `skills/refinet-platform-ops/references/email-templates.md` for HTML template functions.
+
+---
+
+## 11. Database Architecture
 
 Two SQLite databases with WAL mode for concurrent reads:
 

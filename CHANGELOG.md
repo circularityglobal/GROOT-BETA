@@ -4,6 +4,94 @@ All notable changes to REFINET Cloud are documented in this file.
 
 ---
 
+## [3.5.0] — 2026-03-20
+
+### Added — Contract Security Analysis Pipeline
+- `ContractSecurityFlag` SQLAlchemy model in `api/models/registry.py` — persists ABI security scan results (pattern, severity, location, description, risk) with CASCADE FK to `registry_abis`
+- `GET /registry/abis/{abi_id}/security-flags` endpoint — retrieve security analysis flags for any ABI
+- Automated ABI security scanning via `contract_scan.py` stores flags in DB and exposes them through the API
+
+### Added — Skills Test Suite (56 Tests)
+- `skills/tests/conftest.py` — shared fixtures with full real schema (knowledge, registry, chain tables), mock SMTP/httpx, sample ABIs
+- `skills/tests/test_platform_ops.py` — 12 tests: subsystem checks, DB connectivity, report formatting, email delivery
+- `skills/tests/test_knowledge_curator.py` — 16 tests: stats accuracy, orphan detection, stale chunk pruning, CAG sync, report validation
+- `skills/tests/test_contract_watcher.py` — 21 tests: all 8 dangerous pattern detections, clean ABI verification, risk scoring, flag persistence, event/registry stats
+- `skills/tests/test_pipeline_integration.py` — 7 tests: sequential pipeline (platform-ops → knowledge-curator → contract-watcher), report format validation, exit code verification
+- Total test count: **270 passing** (214 API + 56 skills)
+
+### Fixed — Critical Schema Mismatches in Skill Scripts
+- `knowledge_health.py` — 7 SQL fixes: `documents` → `knowledge_documents`, `document_chunks` → `knowledge_chunks`, removed nonexistent `chunk_embeddings` table (embeddings are a column on `knowledge_chunks`), `d.format` → `d.doc_type`, `cag_index` → `contract_definitions`, `contract_abis` → `registry_abis`, renamed `chunk_count` alias to `num_chunks` to avoid SQLite column-alias collision in HAVING clause
+- `contract_scan.py` — 7 SQL fixes: `contract_abis` → `registry_abis`, `ca.chain_id` → `ca.chain`, `ca.name` → `ca.contract_name`, `chain_listeners` → `chain_watchers`, removed nonexistent `chain_events.status` column, `chain_events.created_at` → `received_at`, `chain_events.chain_id` → `chain`
+
+### Fixed — Documentation Alignment with Actual Schema
+- `skills/refinet-knowledge-curator/SKILL.md` — ~15 table name corrections across storage architecture, pseudo-code examples, and cron schedule descriptions
+- `skills/refinet-contract-watcher/SKILL.md` — ~8 table name corrections across storage architecture, activity monitoring, and bridge correlation pseudo-code
+- `skills/refinet-knowledge-curator/references/knowledge-api.md` — rewrote all 4 CREATE TABLE schemas to match actual models (`knowledge_documents`, `knowledge_chunks`, `contract_definitions`)
+- `skills/refinet-contract-watcher/references/chain-api.md` — rewrote all 3 CREATE TABLE schemas to match actual models (`chain_watchers`, `chain_events` with correct columns, `contract_security_flags` with FK to `registry_abis`)
+- `configs/knowledge-curator-cron.yaml` — corrected table references in task descriptions
+- `configs/contract-watcher-cron.yaml` — corrected table references in task descriptions
+
+---
+
+## [3.4.0] — 2026-03-20
+
+### Added — Knowledge Curator Skill (Autonomous RAG/CAG Maintenance)
+- `skills/refinet-knowledge-curator/` — 546-line skill for autonomous knowledge base intelligence maintenance
+  - `SKILL.md` — 7-part skill: KB architecture, autonomous pipelines, email notifications, cron schedule, operating procedures, safety, references
+  - `scripts/knowledge_health.py` — KB health checker: orphan detection, stale chunk pruning, CAG sync check, embedding stats, HTML email reporting
+  - `references/knowledge-api.md` — Knowledge base API endpoints and SQLite schema (documents, chunks, embeddings, FTS5, cag_index)
+  - `references/embedding-pipeline.md` — Embedding pipeline flow, hybrid 3-signal search algorithm, re-embedding strategy, ARM capacity planning
+- `configs/knowledge-curator-cron.yaml` — 5 scheduled tasks: 30m ingestion check, 6h orphan repair, 6h CAG sync, daily benchmark, daily digest
+- `.github/workflows/knowledge-curator.yml` — GitHub Actions for scheduled health checks and manual curator tasks
+- `scripts/install_knowledge_curator_cron.sh` — Server cron installer with --remove support
+- `docs/KNOWLEDGE_CURATOR_SETUP.md` — Setup guide, prerequisites, local testing commands, $0/month cost breakdown
+
+### Added — Contract Watcher Skill (Autonomous On-Chain Intelligence)
+- `skills/refinet-contract-watcher/` — 620-line skill for autonomous on-chain intelligence across 6 EVM chains
+  - `SKILL.md` — 7-part skill: on-chain architecture, autonomous pipelines (event interpretation, ABI security, activity monitoring, bridge correlation), email notifications, cron schedule, operating procedures, safety, references
+  - `scripts/contract_scan.py` — ABI security scanner: 8 dangerous pattern categories (delegatecall, selfdestruct, tx.origin, unchecked call, infinite approval, inline assembly, proxy patterns, ownership transfer), chain event stats, registry stats, HTML email reporting
+  - `references/chain-api.md` — Chain listener API, 6-chain RPC configuration (free public endpoints), DB schemas
+  - `references/registry-api.md` — Smart contract registry API, security flag format, SDK generation pipeline
+- `configs/contract-watcher-cron.yaml` — 5 scheduled tasks: 5m event processing, 15m ABI scan, 4h activity monitor, 12h bridge correlation, weekly report
+- `.github/workflows/contract-watcher.yml` — GitHub Actions with 3 jobs: abi-scan, watcher-task, weekly-report
+- `scripts/install_contract_watcher_cron.sh` — Server cron installer with --remove support
+- `docs/CONTRACT_WATCHER_SETUP.md` — Setup guide, prerequisites, local testing commands, $0/month cost breakdown
+
+---
+
+## [3.3.0] — 2026-03-20
+
+### Added — Platform Ops Skill & Autonomous Agent Pipeline
+- `skills/refinet-platform-ops/` — 620-line skill definition teaching Claude Code how to autonomously operate REFINET Cloud
+  - `SKILL.md` — 8-part skill covering architecture map, admin email system, pipeline architecture, health checks, deployment strategies, operating procedures, safety constraints, and reference files
+  - `scripts/health_check.py` — Comprehensive platform health checker (API, BitNet, DB, SMTP, disk, memory) with HTML email reporting via self-hosted SMTP
+  - `scripts/run_agent.sh` — Zero-cost agent pipeline runner with 4-tier LLM fallback chain: Claude Code CLI → Ollama → BitNet → Gemini Flash (all free)
+  - `references/api-endpoints.md` — Quick-reference for 210+ API endpoints across 22 route groups
+  - `references/agent-engine.md` — Agent Engine architecture reference (SOUL format, cognitive loop, context injection, memory tiers)
+  - `references/email-templates.md` — Python functions for HTML admin alert emails (health, security, daily summary)
+
+### Added — File-Based Agent Memory Directories
+- `memory/working/` — Per-agent working memory state (JSON, per-run TTL)
+- `memory/episodic/` — Timestamped agent run logs (JSONL, append-only)
+- `memory/semantic/` — Distilled facts and embeddings (JSON, permanent)
+- `memory/procedural/` — Learned tool-use patterns (JSON, permanent)
+- `.gitkeep` files ensure directories are tracked; `.gitignore` excludes runtime data (`*.json`, `*.jsonl`)
+
+### Added — Zero-Cost Autonomous Agent Execution
+- 4-tier LLM fallback chain: Claude Code CLI (`claude -p`) → Ollama (phi3/llama3) → BitNet b1.58 2B4T → Gemini Flash (free tier)
+- 7-layer context injection stack assembled from repo files: SOUL → Safety → Agent Config → Working Memory → Episodic Memory → Task
+- All agent results written to episodic memory as JSONL for audit trail
+- Cron-driven pipeline configuration in `configs/platform-ops-cron.yaml` (heartbeat 60s, inference check 5m, security audit 15m, memory cleanup 1h, knowledge integrity 6h, daily summary, weekly audit)
+- GitHub Actions workflow template for scheduled health checks and weekly audits at zero cost
+
+### Added — Admin Email Notification System
+- 8 alert categories with structured subject prefixes: HEALTH, SECURITY, AGENT, DEPLOY, CHAIN, REGISTRY, KNOWLEDGE, MAINTENANCE
+- Self-hosted SMTP via REFINET bridge on port 8025 (zero cost, no third-party providers)
+- HTML email templates with inline CSS for universal client compatibility
+- `send_admin_alert()` function pattern for all ops scripts and agents
+
+---
+
 ## [3.2.0] — 2026-03-20
 
 ### Added — GROOT as Sole Wizard

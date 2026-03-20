@@ -1,0 +1,53 @@
+# REFINET Contract Watcher — Autonomous On-Chain Intelligence Schedule
+# All tasks execute through the zero-cost LLM fallback chain
+# All RPC calls use free public endpoints — no API keys
+# Total recurring cost: $0
+
+schedules:
+  # Every 5 minutes — process new captured events
+  - name: event-processing
+    interval: 5m
+    agent: contract-watcher
+    task: >
+      Check chain_events table for new events (via received_at timestamp).
+      For each event, load the contract ABI from registry_abis, decode
+      event parameters, classify as routine/notable/anomalous/dangerous.
+      Alert admin for anomalous or dangerous events.
+
+  # Every 15 minutes — scan new ABI uploads
+  - name: abi-security-scan
+    interval: 15m
+    agent: contract-watcher
+    task: >
+      Check registry_abis table for ABIs not yet security-analyzed.
+      For each, run dangerous pattern analysis (delegatecall, selfdestruct,
+      tx.origin, unchecked call, infinite approval, assembly, proxy, ownership).
+      Store flags in contract_security_flags. Email admin for HIGH or CRITICAL.
+
+  # Every 4 hours — watched contract activity check
+  - name: activity-monitor
+    interval: 4h
+    agent: contract-watcher
+    task: >
+      Get all starred/forked contracts. For each, check on-chain activity
+      via public RPC. Compare against historical baselines in episodic memory.
+      Alert admin on anomalies: tx spike above 3x, balance drop above 50%,
+      balance surge above 5x baseline.
+
+  # Every 12 hours — cross-chain bridge correlation
+  - name: bridge-correlation
+    interval: 12h
+    agent: contract-watcher
+    task: >
+      Scan chain_events for transactions involving known bridge contracts
+      (Optimism, Arbitrum, Base, Polygon bridges). Correlate L1 deposits
+      with L2 arrivals. Flag unmatched deposits. Report bridge summary.
+
+  # Weekly Monday at 06:30 UTC — chain intelligence report
+  - name: weekly-report
+    cron: "30 6 * * 1"
+    agent: contract-watcher
+    task: >
+      Compile weekly chain intelligence: contracts monitored, events per chain,
+      security flags by severity, anomalous events, bridge transactions,
+      new ABIs analyzed, chains active vs inactive. HTML email to admin.

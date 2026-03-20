@@ -61,12 +61,24 @@ See the full specification in `docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md`.
 6. Agents inherit owner permissions — no privilege escalation
 7. Chain watchers may detect events but NEVER initiate state-changing transactions autonomously
 
+**Autonomous Platform Operations (3 Agent Skills Installed):**
+- `skills/refinet-platform-ops/` — Platform monitoring, health checks, admin email alerts, agent pipeline orchestration
+- `skills/refinet-knowledge-curator/` — RAG/CAG intelligence maintenance: orphan detection, stale chunk pruning, CAG sync, embedding drift detection
+- `skills/refinet-contract-watcher/` — On-chain intelligence: ABI security scanning (8 dangerous patterns), event interpretation, contract activity monitoring, cross-chain bridge correlation
+- Zero-cost agent pipeline: Claude Code CLI → Ollama → BitNet → Gemini Flash (4-tier fallback, all free)
+- File-based agent memory: `memory/{working,episodic,semantic,procedural}/` for persistent agent state across runs
+- 15 cron-driven autonomous tasks across 3 agents (platform-ops, knowledge-curator, contract-watcher)
+- Admin email alerts via self-hosted SMTP (8+ categories: HEALTH, SECURITY, AGENT, DEPLOY, CHAIN, REGISTRY, KNOWLEDGE, MAINTENANCE, ABI_SECURITY, EVENT_ANOMALY)
+- GitHub Actions workflows for all 3 agents (zero-cost CI/CD scheduling)
+
 **Scale:**
 - 29 route files, 302+ API endpoints
 - 71+ database tables (public + internal)
 - 70+ service modules, 12 auth modules
 - 16 migration files, 6 middleware modules
 - 10 test files, 40+ operational scripts
-- 24 frontend pages, 20+ components, 14 documentation files
+- 24 frontend pages, 20+ components, 17 documentation files
 - 5 root control documents (SOUL, SAFETY, MEMORY, HEARTBEAT, AGENTS)
-- 4 skills, 2 YAML config files, JSONL audit logging
+- 7 skills (platform-ops, knowledge-curator, contract-watcher + 4 base), 4 YAML config files, JSONL audit logging
+- 4 persistent memory directories for autonomous agent state
+- 3 GitHub Actions workflows for autonomous agent scheduling

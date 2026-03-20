@@ -109,6 +109,20 @@ class ExecutionLogic(PublicBase):
     updated_at = Column(DateTime, server_default=func.now())
 
 
+class ContractSecurityFlag(PublicBase):
+    """Security flag detected during ABI analysis."""
+    __tablename__ = "contract_security_flags"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    abi_id = Column(String, ForeignKey("registry_abis.id", ondelete="CASCADE"), nullable=False, index=True)
+    pattern = Column(String, nullable=False)  # delegatecall | selfdestruct | CLEAN | etc.
+    severity = Column(String, nullable=False)  # CRITICAL | HIGH | MEDIUM | LOW | NONE
+    location = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    risk = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class RegistryStar(PublicBase):
     """User star (like) on a registry project."""
     __tablename__ = "registry_stars"

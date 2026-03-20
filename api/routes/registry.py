@@ -289,6 +289,37 @@ def get_abi_detail(
     }
 
 
+@router.get("/abis/{abi_id}/security-flags")
+def get_abi_security_flags(
+    abi_id: str,
+    db: Session = Depends(public_db_dependency),
+):
+    """Get security analysis flags for a specific ABI."""
+    from api.models.registry import ContractSecurityFlag, RegistryABI
+    abi = db.query(RegistryABI).filter(RegistryABI.id == abi_id).first()
+    if not abi:
+        raise HTTPException(status_code=404, detail="ABI not found")
+    flags = db.query(ContractSecurityFlag).filter(
+        ContractSecurityFlag.abi_id == abi_id
+    ).all()
+    return {
+        "abi_id": abi_id,
+        "contract_name": abi.contract_name,
+        "flags": [
+            {
+                "pattern": f.pattern,
+                "severity": f.severity,
+                "location": f.location,
+                "description": f.description,
+                "risk": f.risk,
+            }
+            for f in flags
+        ],
+        "flag_count": len(flags),
+        "has_critical": any(f.severity == "CRITICAL" for f in flags),
+    }
+
+
 @router.delete("/abis/{abi_id}")
 def delete_abi(
     abi_id: str,

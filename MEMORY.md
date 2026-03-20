@@ -22,5 +22,31 @@
 - Contract source code is never included in agent context — SDKs only.
 - Working memory is scoped to a single task and auto-cleaned after completion.
 
+## File-Based Memory Directories
+
+In addition to DB-backed memory, agents write to persistent file-based directories for cross-run state:
+
+| Directory | Format | Purpose |
+|---|---|---|
+| `memory/working/` | `{agent_name}.json` | Latest run state per agent (overwritten each run) |
+| `memory/episodic/` | `{agent_name}.jsonl` | Append-only log of all agent runs (JSONL) |
+| `memory/semantic/` | JSON files | Distilled facts extracted during REFLECT phase |
+| `memory/procedural/` | JSON files | Learned tool-use patterns with success rates |
+
+The `run_agent.sh` pipeline runner (`skills/refinet-platform-ops/scripts/`) writes to these directories automatically. Runtime data (`*.json`, `*.jsonl`) is gitignored; directories are tracked via `.gitkeep`.
+
+## Knowledge Curator Memory Usage
+
+The knowledge-curator agent uses the 4-tier memory system as follows:
+
+| Tier | What the Curator Stores |
+|---|---|
+| Working | Current ingestion batch state, documents being processed |
+| Episodic | Ingestion events, orphan repairs, benchmark scores over time |
+| Semantic | Embedding quality baselines, document format patterns |
+| Procedural | Learned chunking strategies per format, optimal re-embed timing |
+
+The curator's episodic memory is critical for embedding drift detection — it compares current benchmark scores against historical entries to identify downward trends. If 3+ consecutive benchmarks show declining recall, the agent escalates to admin with a full re-embed recommendation.
+
 ## Current State
 {injected at runtime: working memory summary, recent episodic entries, relevant procedural patterns}

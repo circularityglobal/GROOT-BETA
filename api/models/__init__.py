@@ -19,7 +19,7 @@ from api.models.knowledge import (  # noqa: F401
 )
 from api.models.registry import (  # noqa: F401
     RegistryProject, RegistryABI, RegistrySDK,
-    ExecutionLogic, RegistryStar, RegistryFork,
+    ExecutionLogic, ContractSecurityFlag, RegistryStar, RegistryFork,
 )
 from api.models.brain import (  # noqa: F401
     UserRepository, ContractRepo, ContractFunction,

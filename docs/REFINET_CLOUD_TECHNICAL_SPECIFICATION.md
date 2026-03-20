@@ -1426,6 +1426,99 @@ Of 210+ endpoints, only the inference route and agent cognitive loop touch the B
 
 ---
 
-*This document is an internal technical reference for REFINET Cloud v3.0.*
+---
+
+## 13. Autonomous Platform Operations (v3.4)
+
+Three autonomous agent skills provide zero-cost platform oversight, knowledge maintenance, and on-chain intelligence.
+
+### 13.1 — Installed Agent Skills
+
+| Skill | Agent | Lines | Purpose |
+|-------|-------|-------|---------|
+| `skills/refinet-platform-ops/` | platform-ops | 620 | Health monitoring, admin alerts, agent pipeline orchestration |
+| `skills/refinet-knowledge-curator/` | knowledge-curator | 546 | RAG/CAG maintenance: orphan repair, stale pruning, CAG sync, drift detection |
+| `skills/refinet-contract-watcher/` | contract-watcher | 620 | ABI security scanning (8 patterns), event interpretation, activity monitoring, bridge correlation |
+
+All 3 agents share the same `run_agent.sh` zero-cost LLM fallback chain from platform-ops.
+
+**Platform Ops components:**
+
+| File | Purpose |
+|------|---------|
+| `SKILL.md` | 8-part skill: architecture, email, pipeline, health, deployment, ops, safety, references |
+| `scripts/health_check.py` | Subsystem checker (API, BitNet, DB, SMTP, disk, memory) with email reporting |
+| `scripts/run_agent.sh` | Zero-cost pipeline runner with 4-tier LLM fallback chain |
+
+**Knowledge Curator components:**
+
+| File | Purpose |
+|------|---------|
+| `SKILL.md` | 7-part skill: KB architecture, pipelines, email, cron, procedures, safety, references |
+| `scripts/knowledge_health.py` | Orphan detection, stale chunk pruning, CAG sync check, email reporting |
+
+**Contract Watcher components:**
+
+| File | Purpose |
+|------|---------|
+| `SKILL.md` | 7-part skill: on-chain architecture, pipelines, email, cron, procedures, safety, references |
+| `scripts/contract_scan.py` | ABI scanner (8 dangerous patterns), chain/registry stats, email reporting |
+
+### 13.2 — Zero-Cost Agent Execution Stack
+
+The platform achieves fully autonomous AI operations without any paid API calls through a 4-tier fallback chain:
+
+| Tier | Runtime | Cost | Quality | Best For |
+|------|---------|------|---------|----------|
+| 1 | Claude Code CLI (`claude -p`) | $0 | Highest | Complex reasoning, multi-step ops |
+| 2 | Ollama (phi3-mini / llama3) | $0 | Good | Structured output, log parsing |
+| 3 | BitNet b1.58 2B4T | $0 | Basic | RAG-grounded answers, always-on |
+| 4 | Gemini Flash (free tier) | $0 | Good | Fallback, web-grounded research |
+
+### 13.3 — File-Based Agent Memory
+
+Persistent memory directories complement the DB-backed 4-tier memory system:
+
+| Directory | Format | TTL | Purpose |
+|-----------|--------|-----|---------|
+| `memory/working/` | `{agent}.json` | Per-run | Latest agent state (overwritten) |
+| `memory/episodic/` | `{agent}.jsonl` | Permanent | Append-only audit trail of all runs |
+| `memory/semantic/` | JSON | Permanent | Distilled facts from REFLECT phase |
+| `memory/procedural/` | JSON | Permanent | Learned tool-use patterns |
+
+Runtime data (`*.json`, `*.jsonl`) is gitignored; directories are tracked via `.gitkeep`.
+
+### 13.4 — Admin Email Alert System
+
+20+ structured alert categories across 3 agents via self-hosted SMTP (port 8025, no third-party dependencies):
+
+- **Platform Ops**: HEALTH, SECURITY, AGENT, DEPLOY, CHAIN, REGISTRY, KNOWLEDGE, MAINTENANCE
+- **Knowledge Curator**: INGESTION, INGESTION_FAIL, ORPHAN, PRUNE, CAG_SYNC, DRIFT, DIGEST
+- **Contract Watcher**: ABI_SECURITY, EVENT_ANOMALY, ACTIVITY_ALERT, BRIDGE_ALERT, WEEKLY_REPORT
+
+Each category uses a `[REFINET {CATEGORY}]` subject prefix and inline-CSS HTML templates for universal email client compatibility.
+
+### 13.5 — Autonomous Cron Schedule
+
+15 scheduled tasks across 3 agents, all at zero cost:
+
+| Interval | Agent | Task |
+|---|---|---|
+| 60s | platform-ops | Heartbeat health check |
+| 5m | contract-watcher | Process chain events |
+| 15m | contract-watcher | ABI security scan |
+| 30m | knowledge-curator | Pending ingestion check |
+| 1h | maintenance | Memory pruning |
+| 4h | contract-watcher | Contract activity check |
+| 6h | knowledge-curator | Orphan repair + CAG sync |
+| 12h | contract-watcher | Bridge correlation |
+| Daily | platform-ops + knowledge-curator | Platform summary + knowledge digest |
+| Weekly | platform-ops + contract-watcher | Platform audit + chain intelligence report |
+
+GitHub Actions workflows for all 3 agents provide CI/CD scheduling at zero cost.
+
+---
+
+*This document is an internal technical reference for REFINET Cloud v3.4.*
 *Classification: Internal / Academic.*
 *Last updated: March 2026.*

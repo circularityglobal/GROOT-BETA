@@ -1,0 +1,50 @@
+# REFINET Knowledge Curator — Autonomous RAG/CAG Maintenance Schedule
+# All tasks execute through the zero-cost LLM fallback chain
+# Total recurring cost: $0
+
+schedules:
+  # Every 30 minutes — check for unprocessed uploads
+  - name: ingestion-check
+    interval: 30m
+    agent: knowledge-curator
+    task: >
+      Check for documents in the knowledge_documents table with zero chunks
+      or missing embeddings. For each, run the ingestion pipeline and verify.
+      Email admin summary if any new documents were processed.
+
+  # Every 6 hours — orphan detection and repair
+  - name: orphan-repair
+    interval: 6h
+    agent: knowledge-curator
+    task: >
+      Scan for orphaned documents (metadata exists, chunks/embeddings missing).
+      Re-embed all orphans. Scan for stale chunks (chunks exist, parent document
+      deleted). Prune all stale chunks. Email admin report with counts.
+
+  # Every 6 hours — CAG index sync
+  - name: cag-sync
+    interval: 6h
+    agent: knowledge-curator
+    task: >
+      Check smart contract registry for ABIs not yet in the CAG index.
+      Parse each, generate SDK descriptions, embed, and insert into contract_definitions.
+      Email admin if new contracts were indexed.
+
+  # Daily at 05:30 UTC — embedding quality benchmark
+  - name: quality-benchmark
+    cron: "30 5 * * *"
+    agent: knowledge-curator
+    task: >
+      Run embedding benchmark against 5 standard queries. Compute average
+      recall score. If recall below 0.5, flag embedding drift and alert admin.
+      Log results to episodic memory for trend tracking.
+
+  # Daily at 06:00 UTC — knowledge digest email
+  - name: daily-digest
+    cron: "0 6 * * *"
+    agent: knowledge-curator
+    task: >
+      Compile 24-hour knowledge base digest: new documents ingested, total
+      chunks created, orphans repaired, stale chunks pruned, CAG contracts
+      synced, search quality score, database size. Format as HTML dashboard
+      email and send to admin.

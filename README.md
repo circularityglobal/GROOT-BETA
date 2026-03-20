@@ -70,6 +70,8 @@ Groot is augmented with two knowledge systems:
 - GitHub-style project management (create, star, fork)
 - ABI upload, parsing, and verification
 - Automatic function/event extraction with access control detection
+- **Automated ABI security scanning** — 8 dangerous pattern categories (delegatecall, selfdestruct, tx.origin, unchecked call, infinite approval, inline assembly, proxy patterns, ownership transfer) with severity classification (CRITICAL/HIGH/MEDIUM)
+- Security flags persisted to `contract_security_flags` table and exposed via `GET /registry/abis/{id}/security-flags`
 - SDK generation from parsed ABIs
 - Public explorer for discovering contracts across chains
 - Tag taxonomy: 11 categories (DeFi, Token, Governance, NFT, Security, Oracle, Identity, Payment, Infrastructure, Gaming, ReFi) with 95 subcategories
@@ -162,6 +164,16 @@ Groot is augmented with two knowledge systems:
 - Safe script execution engine with category-based access control
 - 36 operational scripts across 6 categories: analysis (4), chain (3), DApp (5), maintenance (10), ops (10), seed (4)
 
+### Autonomous Agent Pipeline (3 Skills Installed)
+- **Platform Ops** (`skills/refinet-platform-ops/`) — Autonomous monitoring, health checks, admin email alerts, agent pipeline orchestration
+- **Knowledge Curator** (`skills/refinet-knowledge-curator/`) — RAG/CAG intelligence maintenance: orphan detection, stale chunk pruning, CAG sync, embedding drift detection, daily digest emails
+- **Contract Watcher** (`skills/refinet-contract-watcher/`) — On-chain intelligence: ABI security scanning (8 dangerous patterns), event interpretation, contract activity monitoring, cross-chain bridge correlation, weekly chain reports
+- Zero-cost 4-tier LLM fallback chain: Claude Code CLI (`claude -p`) → Ollama (phi3/llama3) → BitNet b1.58 → Gemini Flash (all free, no paid API calls)
+- 7-layer context injection stack: SOUL → Safety → Agent Config → Working Memory → Episodic Memory → Task
+- Persistent file-based agent memory: `memory/{working,episodic,semantic,procedural}/`
+- 15 cron-driven autonomous tasks across 3 agents
+- GitHub Actions workflows for all 3 agents (zero-cost CI/CD scheduling, 2000 min/month free)
+
 ## For Users
 
 Visit `app.refinet.io` and start chatting. No account required for basic use. Connect your Ethereum wallet via SIWE (Sign-In with Ethereum) for full access including messaging, contract registry, and API keys.
@@ -199,7 +211,7 @@ response = client.chat.completions.create(
 | `/provider-keys/*` | 6 | Full Auth (SIWE+Password+TOTP) |
 | `/knowledge/*` | 36 | Admin (write), any (search) |
 | `/admin/*` | 55 | Admin role (wallet/chains: master_admin) |
-| `/registry/*` | 27 | JWT |
+| `/registry/*` | 28 | JWT |
 | `/repo/*` | 14 | JWT |
 | `/explore/*` | 8 | No (cag/act requires JWT) |
 | `/identity/*` | 9 | JWT |
@@ -255,7 +267,7 @@ Any device that can send HTTP POST requests can register, send telemetry, and re
 
 | Component | Technology |
 |---|---|
-| Backend | FastAPI 0.115.x + SQLAlchemy 2.0 + SQLite (WAL, dual DB, 71+ tables) |
+| Backend | FastAPI 0.115.x + SQLAlchemy 2.0 + SQLite (WAL, dual DB, 80 tables across 11 model files) |
 | Inference | BitNet b1.58 2B4T via bitnet.cpp (CPU-native, ARM-optimized) |
 | Agent Engine | 6-phase cognitive loop + 5-tier memory + SOUL.md identity + MCP tool dispatch + CAG |
 | Wizard Pipeline | DAG orchestrator + 9 workers + parallel execution + PendingAction approval gates |
@@ -272,17 +284,25 @@ Any device that can send HTTP POST requests can register, send telemetry, and re
 ## Testing
 
 ```bash
-# Run full test suite (207 pass)
+# Run full test suite (270 pass)
+python3 -m pytest api/tests/ skills/tests/ -v
+
+# Run API tests only (214 pass)
 python3 -m pytest api/tests/ -v
+
+# Run skills pipeline tests only (56 pass)
+python3 -m pytest skills/tests/ -v
 
 # Run agent engine tests only (18/18 pass)
 python3 -m pytest api/tests/test_agent_engine.py -v
 
-# Run specific test file
-python3 -m pytest api/tests/test_registry.py -v
+# Run standalone skill health checks against real DB
+DATABASE_PATH=data/public.db python3 skills/refinet-platform-ops/scripts/health_check.py
+DATABASE_PATH=data/public.db python3 skills/refinet-knowledge-curator/scripts/knowledge_health.py
+DATABASE_PATH=data/public.db python3 skills/refinet-contract-watcher/scripts/contract_scan.py --scan-abis
 ```
 
-Test coverage: 10 test files, 212 test cases. 207 pass, 5 known failures (pre-existing auth route path mismatch and inference mock target — not related to core functionality).
+Test coverage: **270 passing tests** across 16 test files (12 API + 4 skills). The skills test suite validates the full autonomous pipeline: platform-ops → knowledge-curator → contract-watcher, including all 8 ABI dangerous pattern detections, orphan/stale chunk detection, report formatting, and sequential pipeline execution.
 
 ## Documentation
 
@@ -299,6 +319,11 @@ Test coverage: 10 test files, 212 test cases. 207 pass, 5 known failures (pre-ex
 | [docs/APP_STORE.md](docs/APP_STORE.md) | App Store submission pipeline — sandbox, review, approval |
 | [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | Complete API reference — all endpoints, schemas, auth requirements |
 | [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) | Developer quickstart, project structure, key concepts |
+| [skills/refinet-platform-ops/SKILL.md](skills/refinet-platform-ops/SKILL.md) | Platform ops skill — autonomous monitoring, health checks, agent pipeline |
+| [skills/refinet-knowledge-curator/SKILL.md](skills/refinet-knowledge-curator/SKILL.md) | Knowledge curator skill — RAG/CAG maintenance and drift detection |
+| [skills/refinet-contract-watcher/SKILL.md](skills/refinet-contract-watcher/SKILL.md) | Contract watcher skill — on-chain intelligence and ABI security |
+| [docs/KNOWLEDGE_CURATOR_SETUP.md](docs/KNOWLEDGE_CURATOR_SETUP.md) | Knowledge curator setup guide |
+| [docs/CONTRACT_WATCHER_SETUP.md](docs/CONTRACT_WATCHER_SETUP.md) | Contract watcher setup guide |
 | [DEPLOY_ORACLE_CLOUD.md](DEPLOY_ORACLE_CLOUD.md) | Step-by-step Oracle Cloud ARM deployment |
 | [CHANGELOG.md](CHANGELOG.md) | Version history and release notes |
 

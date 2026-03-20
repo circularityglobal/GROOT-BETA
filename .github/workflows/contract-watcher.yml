@@ -1,0 +1,74 @@
+name: REFINET Contract Watcher — Autonomous On-Chain Intelligence
+
+on:
+  schedule:
+    # Daily ABI scan at 07:00 UTC
+    - cron: '0 7 * * *'
+    # Weekly chain intelligence report Monday 06:30 UTC
+    - cron: '30 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Contract watcher task'
+        required: false
+        default: 'Scan all unanalyzed ABIs and email security report'
+
+jobs:
+  abi-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Scan ABIs for dangerous patterns
+        run: python skills/refinet-contract-watcher/scripts/contract_scan.py --scan-abis --email
+        env:
+          DATABASE_PATH: ${{ secrets.DATABASE_PATH }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+
+  watcher-task:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y jq
+      - name: Run watcher agent
+        run: |
+          chmod +x skills/refinet-platform-ops/scripts/run_agent.sh
+          ./skills/refinet-platform-ops/scripts/run_agent.sh \
+            contract-watcher \
+            "${{ github.event.inputs.task }}"
+        env:
+          REFINET_ROOT: ${{ github.workspace }}
+          BITNET_HOST: ${{ secrets.BITNET_HOST }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+
+  weekly-report:
+    if: github.event.schedule == '30 6 * * 1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get install -y jq
+      - name: Run weekly chain intelligence report
+        run: |
+          chmod +x skills/refinet-platform-ops/scripts/run_agent.sh
+          ./skills/refinet-platform-ops/scripts/run_agent.sh \
+            contract-watcher \
+            "Compile weekly chain intelligence report with full stats and email admin"
+        env:
+          REFINET_ROOT: ${{ github.workspace }}
+          BITNET_HOST: ${{ secrets.BITNET_HOST }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}

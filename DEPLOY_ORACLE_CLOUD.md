@@ -511,3 +511,94 @@ The script clones/pulls the repo, installs dependencies, builds, copies output t
 4. Add DNS A record: `<subdomain> → <PUBLIC_IP>`
 5. Get TLS cert: `sudo certbot --nginx -d <subdomain>.refinet.io`
 6. Deploy: `sudo bash scripts/deploy-product.sh <name>`
+
+---
+
+## Step 11: Set Up Autonomous Agent Pipeline (Optional)
+
+The platform includes a zero-cost autonomous agent pipeline that can monitor health, run maintenance, and send admin email alerts without any paid API calls.
+
+### 11.1 Verify Prerequisites
+
+```bash
+# Claude Code CLI (primary — highest quality)
+claude --version
+
+# Ollama (secondary — local CPU, optional)
+curl http://localhost:11434/api/tags
+
+# BitNet (tertiary — already running via refinet-bitnet service)
+curl http://localhost:8080/health
+
+# Gemini Flash (quaternary — set GEMINI_API_KEY in .env for free tier access)
+```
+
+### 11.2 Run Initial Health Check
+
+```bash
+cd /opt/refinet/app
+source /opt/refinet/venv/bin/activate
+
+# Run comprehensive health check
+python3 skills/refinet-platform-ops/scripts/health_check.py --email --always
+```
+
+### 11.3 Set Up Cron for Autonomous Monitoring
+
+```bash
+# Edit crontab
+crontab -e
+
+# Add these entries:
+# Heartbeat health check every 5 minutes
+*/5 * * * * cd /opt/refinet/app && ./skills/refinet-platform-ops/scripts/run_agent.sh platform-ops "Run health check. If any subsystem fails, send HEALTH alert."
+
+# Daily platform summary at 06:00 UTC
+0 6 * * * cd /opt/refinet/app && ./skills/refinet-platform-ops/scripts/run_agent.sh platform-ops "Compile 24h platform summary: requests served, agents run, errors. Email admin."
+
+# Weekly full audit on Monday at 06:00 UTC
+0 6 * * 1 cd /opt/refinet/app && ./skills/refinet-platform-ops/scripts/run_agent.sh platform-ops "Full platform audit: DB size, memory usage, certificate expiry, chain listener health. Email detailed report."
+```
+
+### 11.4 Configure Admin Email
+
+Ensure these are set in `.env`:
+```bash
+ADMIN_EMAIL=admin@refinet.io     # Alert recipient
+SMTP_HOST=127.0.0.1              # Local SMTP bridge
+SMTP_PORT=8025                   # REFINET SMTP bridge port
+MAIL_FROM=groot@refinet.io       # Sender identity
+SMTP_ENABLED=true                # Enable SMTP bridge
+```
+
+### 11.5 Verify Agent Memory Directories
+
+```bash
+ls -la /opt/refinet/app/memory/
+# Should show: working/ episodic/ semantic/ procedural/ (each with .gitkeep)
+```
+
+Agent run results are written to `memory/episodic/{agent_name}.jsonl` and working state to `memory/working/{agent_name}.json`.
+
+### 11.6 Install Knowledge Curator Cron (Optional)
+
+```bash
+sudo bash /opt/refinet/app/scripts/install_knowledge_curator_cron.sh
+```
+
+This installs 3 cron entries: 6-hourly orphan repair + CAG sync, daily embedding benchmark, daily knowledge digest.
+
+### 11.7 Install Contract Watcher Cron (Optional)
+
+```bash
+sudo bash /opt/refinet/app/scripts/install_contract_watcher_cron.sh
+```
+
+This installs 4 cron entries: 15-minute ABI scan, 4-hourly activity check, 12-hourly bridge correlation, weekly chain intelligence report.
+
+### 11.8 Verify All Agent Crons
+
+```bash
+crontab -l | grep "REFINET"
+# Should show entries for REFINET-KNOWLEDGE and REFINET-CHAIN
+```

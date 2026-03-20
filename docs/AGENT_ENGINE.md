@@ -158,3 +158,61 @@ All agent engine tables are in `public.db`:
 - `agent_memory_procedural` — procedural memory
 - `agent_tasks` — task tracking
 - `agent_delegations` — delegation chains
+
+## Autonomous Platform Operations
+
+The `skills/refinet-platform-ops/` skill extends the Agent Engine with fully autonomous, zero-cost operations.
+
+### Zero-Cost Agent Pipeline (`run_agent.sh`)
+
+Executes agent tasks through a 4-tier LLM fallback chain (all free):
+1. **Claude Code CLI** (`claude -p`) — highest quality, unlimited local
+2. **Ollama** (phi3-mini / llama3) — local CPU/GPU
+3. **BitNet b1.58 2B4T** — CPU-native ARM, always available
+4. **Gemini Flash** (free tier) — 15 RPM, web-grounded
+
+The runner assembles a 7-layer context injection stack from repo files (SOUL → Safety → Agent Config → Working Memory → Episodic Memory → Task) and writes all results to file-based episodic memory as JSONL.
+
+### File-Based Agent Memory
+
+In addition to DB-backed memory, agents use persistent file-based directories:
+
+| Directory | File Pattern | Purpose |
+|---|---|---|
+| `memory/working/` | `{agent_name}.json` | Latest run state (overwritten each run) |
+| `memory/episodic/` | `{agent_name}.jsonl` | Append-only log of all runs |
+| `memory/semantic/` | JSON files | Distilled facts from REFLECT phase |
+| `memory/procedural/` | JSON files | Learned tool-use patterns |
+
+### Platform Health Check (`health_check.py`)
+
+Comprehensive checker that tests: API health, BitNet inference (latency + availability), database connectivity, SMTP bridge, disk usage, and memory usage. Sends formatted HTML email alerts to admin via self-hosted SMTP when issues are detected.
+
+```bash
+# Check and print results
+python3 skills/refinet-platform-ops/scripts/health_check.py
+
+# Check and email admin (only on failures)
+python3 skills/refinet-platform-ops/scripts/health_check.py --email
+
+# Check and always email admin
+python3 skills/refinet-platform-ops/scripts/health_check.py --email --always
+```
+
+### Cron-Driven Autonomous Pipeline
+
+The recommended schedule for fully autonomous oversight (defined in SKILL.md):
+
+| Schedule | Agent | Task |
+|---|---|---|
+| Every 60s | platform-ops | Heartbeat health check |
+| Every 5m | platform-ops / contract-watcher | BitNet inference check / chain event processing |
+| Every 15m | platform-ops / contract-watcher | Security audit / ABI security scan |
+| Every 30m | knowledge-curator | Pending document ingestion check |
+| Every 1h | maintenance | Working memory pruning |
+| Every 4h | contract-watcher | Watched contract activity check |
+| Every 6h | knowledge-curator | Orphan repair + CAG sync |
+| Every 12h | contract-watcher | Cross-chain bridge correlation |
+| Daily 05:30 | knowledge-curator | Embedding quality benchmark |
+| Daily 06:00 | platform-ops / knowledge-curator | Platform summary + knowledge digest |
+| Weekly Monday | platform-ops / contract-watcher | Platform audit + chain intelligence report |

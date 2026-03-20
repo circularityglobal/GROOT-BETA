@@ -12,7 +12,7 @@ REFINET Cloud is a sovereign AI platform for the Regenerative Finance Network. I
 
 | Layer | Technology |
 |---|---|
-| Backend | FastAPI + SQLAlchemy 2.0 + SQLite (WAL mode, 69 tables across 2 databases) |
+| Backend | FastAPI + SQLAlchemy 2.0 + SQLite (WAL mode, 80 tables across 2 databases, 11 model files) |
 | Inference | BitNet b1.58 via bitnet.cpp (CPU-native, ARM-optimized) |
 | Multi-Provider | BitNet → Gemini → Ollama → LM Studio → OpenRouter fallback |
 | RAG | sentence-transformers (384-dim) + FTS5 full-text search |
@@ -69,17 +69,17 @@ groot/
 │   ├── database.py                # SQLAlchemy sessions (public.db + internal.db)
 │   ├── auth/                      # Auth modules (SIWE, JWT, API keys, TOTP, enforce)
 │   ├── middleware/                # CORS, rate limiting, request logging, protocol auth
-│   ├── models/                    # SQLAlchemy ORM (9 model files, 69 tables)
+│   ├── models/                    # SQLAlchemy ORM (11 model files, 80 tables)
 │   │   ├── public.py              # User-facing tables (users, keys, devices, apps, wallets)
 │   │   ├── internal.py            # Admin/secrets tables (wallets, config, audit)
 │   │   ├── agent_engine.py        # SOUL, 4-tier memory, tasks, delegation
-│   │   ├── registry.py            # Contract projects, ABIs, SDKs, stars, forks
+│   │   ├── registry.py            # Contract projects, ABIs, SDKs, security flags, stars, forks
 │   │   ├── knowledge.py           # Documents, chunks, contract definitions
 │   │   ├── brain.py               # Personal contract repositories
 │   │   ├── pipeline.py            # Pipeline runs, steps, pending actions, deployments
 │   │   ├── payments.py            # Fee schedules, payments, subscriptions, revenue splits
 │   │   └── broker.py              # Broker sessions, fee configs
-│   ├── routes/                    # 27 route files, 287 endpoints
+│   ├── routes/                    # 29 route files, 321 endpoints
 │   ├── schemas/                   # Pydantic request/response schemas
 │   ├── services/                  # 61+ service modules (business logic)
 │   │   ├── providers/             # Model provider plugins (BitNet, Gemini, Ollama, etc.)
@@ -107,7 +107,7 @@ groot/
 │   │   ├── workers.py             # 5 deterministic background workers
 │   │   └── wallet_service.py      # Custodial wallets with Shamir SSS
 │   ├── grpc/                      # gRPC server (port 50051)
-│   └── tests/                     # 10 test files, 212 test cases
+│   └── tests/                     # 12 test files, 214 test cases
 │
 ├── frontend/                      # Next.js 14 frontend
 │   ├── app/                       # Page directories
@@ -119,9 +119,27 @@ groot/
 │   └── production.yaml            # Production overrides
 │
 ├── skills/                        # GROOT skill definitions (SKILL.md)
+│   ├── refinet-platform-ops/      # Platform ops (monitoring, health, agent pipeline)
+│   │   ├── SKILL.md               # 620-line skill (8 parts)
+│   │   ├── scripts/               # health_check.py, run_agent.sh (zero-cost pipeline runner)
+│   │   └── references/            # api-endpoints.md, agent-engine.md, email-templates.md
+│   ├── refinet-knowledge-curator/ # Knowledge base maintenance (RAG/CAG integrity)
+│   │   ├── SKILL.md               # 546-line skill (7 parts)
+│   │   ├── scripts/               # knowledge_health.py (orphan/stale/CAG checker)
+│   │   └── references/            # knowledge-api.md, embedding-pipeline.md
+│   ├── refinet-contract-watcher/  # On-chain intelligence (ABI security, events, bridges)
+│   │   ├── SKILL.md               # 620-line skill (7 parts)
+│   │   ├── scripts/               # contract_scan.py (ABI scanner, 8 dangerous patterns)
+│   │   └── references/            # chain-api.md, registry-api.md
 │   ├── answer-question/
 │   ├── analyze-telemetry/
 │   └── summarize-contract/
+│
+├── memory/                        # Persistent agent memory directories
+│   ├── working/                   # Per-agent state (JSON, per-run TTL)
+│   ├── episodic/                  # Agent run logs (JSONL, append-only audit trail)
+│   ├── semantic/                  # Distilled facts + embeddings (permanent)
+│   └── procedural/                # Learned tool-use patterns (permanent)
 │
 ├── scripts/                       # 36 scripts across 6 categories
 │   ├── analysis/                  # 4 scripts (coverage, stats, reports)
@@ -268,8 +286,24 @@ execute_revenue_split(db, payment_id)
 4. Register via API: `POST /agents/register` + `POST /agents/{id}/soul`
 
 ### Adding a skill
-1. Create `skills/my-skill/SKILL.md` with YAML frontmatter (name, description, trigger, agent, input, output)
-2. Skills metadata is automatically loaded into Layer 4 of the context injection stack
+1. Create `skills/my-skill/SKILL.md` with YAML frontmatter (name, description)
+2. Add helper scripts in `skills/my-skill/scripts/` if needed
+3. Add reference docs in `skills/my-skill/references/` if needed
+4. Skills metadata is automatically loaded into Layer 4 of the context injection stack
+5. See `skills/refinet-platform-ops/` for a comprehensive example
+
+### Running the autonomous agent pipeline
+```bash
+# Run a single agent task through the zero-cost LLM fallback chain
+# (Claude Code CLI → Ollama → BitNet → Gemini Flash — all free)
+./skills/refinet-platform-ops/scripts/run_agent.sh platform-ops "Run health check and email admin"
+
+# Run comprehensive health check with email alerts
+python3 skills/refinet-platform-ops/scripts/health_check.py --email --always
+
+# Agent results are written to memory/episodic/{agent_name}.jsonl
+# Working state is saved to memory/working/{agent_name}.json
+```
 
 ### Adding a config key
 1. Add to `configs/default.yaml` with a sensible default
@@ -318,4 +352,9 @@ python3 -c "from api.services.dag_orchestrator import PIPELINE_TEMPLATES; print(
 | `docs/SOUL_FORMAT.md` | Agent SOUL.md format specification |
 | `docs/HEARTBEAT.md` | Health monitoring and scheduled tasks |
 | `docs/GROOT_INTELLIGENCE_WHITEPAPER.md` | Vision and technical whitepaper |
+| `skills/refinet-platform-ops/SKILL.md` | Platform ops skill — autonomous monitoring and agent pipeline |
+| `skills/refinet-knowledge-curator/SKILL.md` | Knowledge curator skill — RAG/CAG maintenance and drift detection |
+| `skills/refinet-contract-watcher/SKILL.md` | Contract watcher skill — on-chain intelligence and ABI security |
+| `docs/KNOWLEDGE_CURATOR_SETUP.md` | Knowledge curator setup guide |
+| `docs/CONTRACT_WATCHER_SETUP.md` | Contract watcher setup guide |
 | `configs/README.md` | YAML configuration hierarchy |

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-REFINET Cloud is a sovereign AI platform with 302+ API endpoints, 71+ database tables, and 24 frontend pages. GROOT is the sole Wizard — the only entity with an on-chain wallet, deployed via Shamir Secret Sharing (3-of-5 threshold).
+REFINET Cloud is a sovereign AI platform with 321 API endpoints, 80 database tables (11 model files), and 24 frontend pages. GROOT is the sole Wizard — the only entity with an on-chain wallet, deployed via Shamir Secret Sharing (3-of-5 threshold).
 
 **Read these files for full context:**
 - @GROOT.md — Master architecture, constraints, subsystems
@@ -27,8 +27,8 @@ uvicorn api.main:app --reload --port 8000
 # Frontend
 cd frontend && npm run dev     # http://localhost:4000
 
-# Tests
-python3 -m pytest api/tests/ -v
+# Tests (270 pass)
+python3 -m pytest api/tests/ skills/tests/ -v
 
 # Import contracts
 python3 scripts/import_contracts.py
@@ -53,6 +53,29 @@ frontend/
 ├── app/           # Next.js App Router pages (24 routes)
 ├── components/    # React components (AuthFlow, WalletOnboarding, etc.)
 └── lib/           # API client (api.ts), config, wallet utils
+
+skills/
+├── refinet-platform-ops/       # Platform ops (monitoring, health checks, agent pipeline)
+│   ├── SKILL.md                # 620-line skill (8 parts)
+│   ├── scripts/                # health_check.py, run_agent.sh (zero-cost pipeline runner)
+│   └── references/             # api-endpoints.md, agent-engine.md, email-templates.md
+├── refinet-knowledge-curator/  # Knowledge base maintenance (RAG/CAG integrity)
+│   ├── SKILL.md                # 546-line skill (7 parts)
+│   ├── scripts/                # knowledge_health.py (orphan/stale/CAG checker)
+│   └── references/             # knowledge-api.md, embedding-pipeline.md
+├── refinet-contract-watcher/   # On-chain intelligence (ABI security, events, bridges)
+│   ├── SKILL.md                # 620-line skill (7 parts)
+│   ├── scripts/                # contract_scan.py (ABI scanner, 8 dangerous patterns)
+│   └── references/             # chain-api.md, registry-api.md
+├── answer-question/            # RAG knowledge base query skill
+├── analyze-telemetry/          # IoT anomaly detection skill
+└── summarize-contract/         # Contract SDK summarization skill
+
+memory/                    # Persistent agent memory (runtime data gitignored)
+├── working/               # Per-agent working state (JSON, per-run)
+├── episodic/              # Agent run logs (JSONL, append-only)
+├── semantic/              # Distilled facts + embeddings (permanent)
+└── procedural/            # Learned tool-use patterns (permanent)
 
 scripts/           # 40+ operational scripts (import, seed, maintenance, chain)
 configs/           # YAML config hierarchy (default.yaml, production.yaml)
@@ -119,11 +142,16 @@ The `wizard` template has parallel paths — frontend depends on parse (not depl
 ## Testing
 
 ```bash
-python3 -m pytest api/tests/ -v          # Full suite (207 pass)
+python3 -m pytest api/tests/ skills/tests/ -v  # Full suite (270 pass)
+python3 -m pytest api/tests/ -v                # API tests only (214 pass)
+python3 -m pytest skills/tests/ -v             # Skills pipeline tests (56 pass)
 python3 -m pytest api/tests/test_agent_engine.py -v  # Agent engine (18/18)
-```
 
-Known test failures (5): auth route path rename + inference mock path — not functional issues.
+# Standalone skill health checks (against real DB)
+DATABASE_PATH=data/public.db python3 skills/refinet-platform-ops/scripts/health_check.py
+DATABASE_PATH=data/public.db python3 skills/refinet-knowledge-curator/scripts/knowledge_health.py
+DATABASE_PATH=data/public.db python3 skills/refinet-contract-watcher/scripts/contract_scan.py --scan-abis
+```
 
 ## Common Tasks
 
@@ -146,3 +174,24 @@ Or: `POST /admin/chains/import { "chain_id": 43114 }` (master_admin required).
 ### Import contracts
 Place JSON in `data/contracts/abis/`, run `python3 scripts/import_contracts.py`.
 Format: `{"name": "...", "abi": [...], "deployments": [{"chain_id": 1, "address": "0x..."}]}`
+
+### Run the autonomous agent pipeline
+```bash
+# Run a single agent task (uses 4-tier LLM fallback: Claude Code → Ollama → BitNet → Gemini)
+./skills/refinet-platform-ops/scripts/run_agent.sh platform-ops "Run health check and email admin"
+
+# Platform health check with email alerts
+python3 skills/refinet-platform-ops/scripts/health_check.py --email --always
+
+# Knowledge base health check (orphans, stale chunks, CAG sync)
+python3 skills/refinet-knowledge-curator/scripts/knowledge_health.py --repair --email
+
+# ABI security scan (8 dangerous patterns)
+python3 skills/refinet-contract-watcher/scripts/contract_scan.py --scan-abis --email
+```
+
+### Add a new skill
+1. Create `skills/my-skill/SKILL.md` with YAML frontmatter (name, description)
+2. Add scripts in `skills/my-skill/scripts/` if needed
+3. Add references in `skills/my-skill/references/` if needed
+4. Skills metadata is auto-loaded into Layer 4 of the context injection stack

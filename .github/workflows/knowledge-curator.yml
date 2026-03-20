@@ -1,0 +1,60 @@
+name: REFINET Knowledge Curator — Autonomous RAG/CAG Maintenance
+
+on:
+  schedule:
+    # Daily health + digest at 06:00 UTC
+    - cron: '0 6 * * *'
+    # 6-hourly orphan repair + CAG sync
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Knowledge curator task'
+        required: false
+        default: 'Full knowledge base health check with repair and email report'
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run knowledge health check
+        run: python skills/refinet-knowledge-curator/scripts/knowledge_health.py --repair --email
+        env:
+          DATABASE_PATH: ${{ secrets.DATABASE_PATH }}
+          REFINET_API_BASE: ${{ secrets.REFINET_API_BASE }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+
+  curator-task:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Run curator agent via fallback chain
+        run: |
+          chmod +x skills/refinet-platform-ops/scripts/run_agent.sh
+          ./skills/refinet-platform-ops/scripts/run_agent.sh \
+            knowledge-curator \
+            "${{ github.event.inputs.task }}"
+        env:
+          REFINET_ROOT: ${{ github.workspace }}
+          BITNET_HOST: ${{ secrets.BITNET_HOST }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}

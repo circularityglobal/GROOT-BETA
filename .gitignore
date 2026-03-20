@@ -51,3 +51,9 @@ certs/
 # Secrets
 *.pem
 *.key
+
+# Memory runtime data (keep directories via .gitkeep)
+memory/working/*.json
+memory/episodic/*.jsonl
+memory/semantic/*.json
+memory/procedural/*.json

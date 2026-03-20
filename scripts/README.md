@@ -81,3 +81,33 @@ source venv/bin/activate  # Required for Python scripts
 | `seed/seed_contracts.py` | Seed sample smart contracts into registry | `python3 scripts/seed/seed_contracts.py` |
 | `seed/seed_knowledge.py` | Seed knowledge base with platform documentation | `python3 scripts/seed/seed_knowledge.py` |
 | `seed/ingest_docs.py` | Ingest documents from a directory into knowledge base | `python3 scripts/seed/ingest_docs.py /path/to/docs` |
+
+## Autonomous Agent Skill Scripts
+
+These scripts live in `skills/` (not in `scripts/`). All 3 agents share the same `run_agent.sh` zero-cost LLM fallback chain.
+
+### Platform Ops (`skills/refinet-platform-ops/scripts/`)
+
+| Script | Purpose | Usage |
+|---|---|---|
+| `health_check.py` | Platform health checker (API, BitNet, DB, SMTP, disk, memory) | `python3 skills/refinet-platform-ops/scripts/health_check.py --email --always` |
+| `run_agent.sh` | Zero-cost agent pipeline runner (Claude Code → Ollama → BitNet → Gemini) | `./skills/refinet-platform-ops/scripts/run_agent.sh platform-ops "Run health check"` |
+
+### Knowledge Curator (`skills/refinet-knowledge-curator/scripts/`)
+
+| Script | Purpose | Usage |
+|---|---|---|
+| `knowledge_health.py` | KB health checker (orphans, stale chunks, CAG sync, embeddings) | `python3 skills/refinet-knowledge-curator/scripts/knowledge_health.py --repair --email` |
+
+### Contract Watcher (`skills/refinet-contract-watcher/scripts/`)
+
+| Script | Purpose | Usage |
+|---|---|---|
+| `contract_scan.py` | ABI security scanner (8 dangerous patterns, chain/registry stats) | `python3 skills/refinet-contract-watcher/scripts/contract_scan.py --scan-abis --email` |
+
+### Cron Installers (`scripts/`)
+
+| Script | Purpose | Usage |
+|---|---|---|
+| `install_knowledge_curator_cron.sh` | Install knowledge-curator cron entries | `sudo bash scripts/install_knowledge_curator_cron.sh` |
+| `install_contract_watcher_cron.sh` | Install contract-watcher cron entries | `sudo bash scripts/install_contract_watcher_cron.sh` |
