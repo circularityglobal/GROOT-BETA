@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
-from api.database import init_databases, get_public_engine, get_internal_engine, PublicBase, InternalBase
+from api.database import init_databases
 
 
 @pytest.fixture(autouse=True)
@@ -40,52 +40,43 @@ def client():
     return TestClient(app)
 
 
-def test_register(client):
-    resp = client.post("/auth/register", json={
-        "email": "test@refinet.cloud",
-        "username": "testuser",
-        "password": "SecurePass123!@#",
-    })
-    assert resp.status_code == 200
+def _create_test_user(client):
+    """Create a test user via the wallet/create endpoint and return tokens + address."""
+    resp = client.post("/auth/wallet/create", json={"chain_id": 1})
+    assert resp.status_code == 200, f"wallet/create failed: {resp.text}"
     data = resp.json()
+    return data
+
+
+def test_wallet_create(client):
+    """POST /auth/wallet/create should create a user with a custodial wallet."""
+    data = _create_test_user(client)
     assert "access_token" in data
-    assert data["email"] == "test@refinet.cloud"
+    assert "eth_address" in data
+    assert data["eth_address"].startswith("0x")
 
 
-def test_register_duplicate_email(client):
-    client.post("/auth/register", json={
-        "email": "test@refinet.cloud",
-        "username": "testuser1",
-        "password": "SecurePass123!@#",
-    })
-    resp = client.post("/auth/register", json={
-        "email": "test@refinet.cloud",
-        "username": "testuser2",
-        "password": "SecurePass123!@#",
-    })
-    assert resp.status_code == 409
+def test_wallet_create_returns_tokens(client):
+    """Wallet creation should return access and refresh tokens."""
+    data = _create_test_user(client)
+    assert "access_token" in data
+    assert "refresh_token" in data
+    assert len(data["access_token"]) > 0
 
 
-def test_login_success(client):
-    client.post("/auth/register", json={
-        "email": "login@refinet.cloud",
-        "username": "loginuser",
-        "password": "SecurePass123!@#",
-    })
+def test_login_requires_password(client):
+    """Login with email/password fails if user has no password set (wallet-only user)."""
+    data = _create_test_user(client)
+    # Wallet users have no email/password — login should reject
     resp = client.post("/auth/login", json={
-        "email": "login@refinet.cloud",
+        "email": "nonexistent@refinet.cloud",
         "password": "SecurePass123!@#",
     })
-    assert resp.status_code == 200
-    assert "access_token" in resp.json()
+    assert resp.status_code == 401
 
 
 def test_login_wrong_password(client):
-    client.post("/auth/register", json={
-        "email": "wrong@refinet.cloud",
-        "username": "wronguser",
-        "password": "SecurePass123!@#",
-    })
+    """Login with wrong credentials returns 401."""
     resp = client.post("/auth/login", json={
         "email": "wrong@refinet.cloud",
         "password": "WrongPassword!@#",
@@ -127,3 +118,20 @@ def test_inference_bad_token(client):
         "messages": [{"role": "user", "content": "hello"}],
     }, headers={"Authorization": "Bearer invalid_token"})
     assert resp.status_code == 401
+
+
+def test_me_requires_auth(client):
+    """GET /auth/me without auth should fail."""
+    resp = client.get("/auth/me")
+    assert resp.status_code == 401
+
+
+def test_me_with_auth(client):
+    """GET /auth/me with valid token should return user info."""
+    data = _create_test_user(client)
+    resp = client.get("/auth/me", headers={
+        "Authorization": f"Bearer {data['access_token']}",
+    })
+    assert resp.status_code == 200
+    me = resp.json()
+    assert me["eth_address"] == data["eth_address"]

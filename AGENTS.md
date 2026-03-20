@@ -8,7 +8,7 @@ Each agent is defined by a SOUL.md identity document.
 
 | Agent | Role | Trigger Types | Tools |
 |---|---|---|---|
-| groot-chat | Conversational Q&A with RAG | user, messenger | knowledge_search, contract_search |
+| groot-chat | **Wizard** — Conversational Q&A + on-chain ops | user, messenger | knowledge_search, contract_search, cag_query, cag_execute, cag_act, wizard_pipeline, compile_contract, deploy_contract |
 | contract-analyst | Smart contract security review | user, webhook | search_registry, get_project, get_contract_sdk |
 | knowledge-curator | Knowledge base maintenance | cron, webhook | search_documents, compare_documents, get_document_tags |
 | platform-ops | Platform metrics + health monitoring | cron, user | execute_script:ops.*, execute_script:maintenance.* |

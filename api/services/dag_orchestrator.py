@@ -28,23 +28,35 @@ logger = logging.getLogger("refinet.dag_orchestrator")
 
 PIPELINE_TEMPLATES = {
     "compile_test": [
-        {"step_name": "compile", "worker_type": "compile_worker"},
-        {"step_name": "test", "worker_type": "test_worker"},
+        {"step_name": "compile", "worker_type": "compile_worker", "depends_on": []},
+        {"step_name": "test", "worker_type": "test_worker", "depends_on": ["compile"]},
     ],
     "deploy": [
-        {"step_name": "compile", "worker_type": "compile_worker"},
-        {"step_name": "test", "worker_type": "test_worker"},
-        {"step_name": "rbac_check", "worker_type": "rbac_check_worker"},
-        {"step_name": "deploy", "worker_type": "deploy_worker"},
-        {"step_name": "verify", "worker_type": "verify_worker"},
+        {"step_name": "compile", "worker_type": "compile_worker", "depends_on": []},
+        {"step_name": "test", "worker_type": "test_worker", "depends_on": ["compile"]},
+        {"step_name": "rbac_check", "worker_type": "rbac_check_worker", "depends_on": ["test"]},
+        {"step_name": "deploy", "worker_type": "deploy_worker", "depends_on": ["rbac_check"]},
+        {"step_name": "verify", "worker_type": "verify_worker", "depends_on": ["deploy"]},
     ],
     "full": [
-        {"step_name": "compile", "worker_type": "compile_worker"},
-        {"step_name": "test", "worker_type": "test_worker"},
-        {"step_name": "rbac_check", "worker_type": "rbac_check_worker"},
-        {"step_name": "deploy", "worker_type": "deploy_worker"},
-        {"step_name": "verify", "worker_type": "verify_worker"},
-        {"step_name": "transfer_ownership", "worker_type": "transfer_ownership_worker"},
+        {"step_name": "compile", "worker_type": "compile_worker", "depends_on": []},
+        {"step_name": "test", "worker_type": "test_worker", "depends_on": ["compile"]},
+        {"step_name": "rbac_check", "worker_type": "rbac_check_worker", "depends_on": ["test"]},
+        {"step_name": "deploy", "worker_type": "deploy_worker", "depends_on": ["rbac_check"]},
+        {"step_name": "verify", "worker_type": "verify_worker", "depends_on": ["deploy"]},
+        {"step_name": "transfer_ownership", "worker_type": "transfer_ownership_worker", "depends_on": ["verify"]},
+    ],
+    # The Wizard pipeline: source code → live DApp
+    # Frontend runs in PARALLEL with rbac/deploy/reparse because it only depends on parse.
+    "wizard": [
+        {"step_name": "compile",    "worker_type": "compile_worker",    "depends_on": []},
+        {"step_name": "test",       "worker_type": "test_worker",       "depends_on": ["compile"]},
+        {"step_name": "parse",      "worker_type": "parse_worker",      "depends_on": ["test"]},
+        {"step_name": "rbac_check", "worker_type": "rbac_check_worker", "depends_on": ["parse"]},
+        {"step_name": "deploy",     "worker_type": "deploy_worker",     "depends_on": ["rbac_check"]},
+        {"step_name": "reparse",    "worker_type": "parse_worker",      "depends_on": ["deploy"]},
+        {"step_name": "frontend",   "worker_type": "frontend_worker",   "depends_on": ["parse"]},
+        {"step_name": "appstore",   "worker_type": "appstore_worker",   "depends_on": ["reparse", "frontend"]},
     ],
 }
 
@@ -56,6 +68,9 @@ WORKER_DISPATCH = {
     "deploy_worker": "api.services.wizard_workers:deploy_worker",
     "verify_worker": "api.services.wizard_workers:verify_worker",
     "transfer_ownership_worker": "api.services.wizard_workers:transfer_ownership_worker",
+    "parse_worker": "api.services.wizard_workers:parse_worker",
+    "frontend_worker": "api.services.wizard_workers:frontend_worker",
+    "appstore_worker": "api.services.wizard_workers:appstore_worker",
 }
 
 
@@ -109,25 +124,29 @@ def create_pipeline(
     )
     db.add(pipeline)
 
-    # Create steps with linear dependencies (each step depends on the previous)
-    step_ids = []
+    # Create steps with explicit DAG dependencies (supports parallel paths)
+    step_name_to_id = {}
     dag = {}
     for i, step_def in enumerate(template):
         step_id = str(uuid.uuid4())
-        depends_on = [step_ids[-1]] if step_ids else []
+        step_name = step_def["step_name"]
+
+        # Resolve named dependencies to step IDs
+        dep_names = step_def.get("depends_on", [])
+        dep_ids = [step_name_to_id[dep] for dep in dep_names if dep in step_name_to_id]
 
         step = PipelineStep(
             id=step_id,
             pipeline_id=pipeline_id,
-            step_name=step_def["step_name"],
+            step_name=step_name,
             step_index=i,
             status="pending",
             worker_type=step_def["worker_type"],
-            depends_on=json.dumps(depends_on) if depends_on else None,
+            depends_on=json.dumps(dep_ids) if dep_ids else None,
         )
         db.add(step)
-        step_ids.append(step_id)
-        dag[step_id] = {"name": step_def["step_name"], "depends_on": depends_on}
+        step_name_to_id[step_name] = step_id
+        dag[step_id] = {"name": step_name, "depends_on": dep_ids, "dep_names": dep_names}
 
     pipeline.dag_json = json.dumps(dag)
     db.flush()
@@ -141,11 +160,14 @@ def create_pipeline(
 
 async def run_pipeline(db: Session, pipeline_id: str) -> PipelineRun:
     """
-    Execute a pipeline by walking the DAG and dispatching each step.
-    Pauses if a step requires admin approval (PendingAction).
+    Execute a pipeline by walking the DAG with parallel execution.
+    Steps whose dependencies are all completed run in parallel.
+    Pauses branches that require admin approval while other branches continue.
 
     Returns the updated PipelineRun.
     """
+    import asyncio
+
     pipeline = db.query(PipelineRun).filter(PipelineRun.id == pipeline_id).first()
     if not pipeline:
         raise ValueError(f"Pipeline not found: {pipeline_id}")
@@ -160,7 +182,7 @@ async def run_pipeline(db: Session, pipeline_id: str) -> PipelineRun:
     config = json.loads(pipeline.config_json or "{}")
     bus = EventBus.get()
 
-    # Get steps ordered by step_index
+    # Load all steps
     steps = (
         db.query(PipelineStep)
         .filter(PipelineStep.pipeline_id == pipeline_id)
@@ -168,149 +190,240 @@ async def run_pipeline(db: Session, pipeline_id: str) -> PipelineRun:
         .all()
     )
 
-    accumulated_output = {}  # Carry forward output from previous steps
+    step_by_id = {s.id: s for s in steps}
+    accumulated_output = {}  # Merged output from all completed steps
 
+    # Collect output from already-completed steps (for resumed pipelines)
     for step in steps:
-        # Skip already completed steps (for resumed pipelines)
-        if step.status == "completed":
-            if step.output_json:
-                accumulated_output.update(json.loads(step.output_json))
-            continue
-        if step.status == "skipped":
-            continue
+        if step.status == "completed" and step.output_json:
+            accumulated_output.update(json.loads(step.output_json))
 
-        # Check dependencies
-        if step.depends_on:
-            dep_ids = json.loads(step.depends_on)
-            for dep_id in dep_ids:
-                dep_step = db.query(PipelineStep).filter(PipelineStep.id == dep_id).first()
-                if not dep_step:
-                    step.status = "failed"
-                    step.error_message = f"Dependency step {dep_id} not found"
-                    pipeline.status = "failed"
-                    pipeline.error_message = step.error_message
-                    db.flush()
-                    return pipeline
-                if dep_step.status != "completed":
-                    step.status = "failed"
-                    step.error_message = f"Dependency '{dep_step.step_name}' not completed (status: {dep_step.status})"
-                    pipeline.status = "failed"
-                    pipeline.error_message = step.error_message
-                    db.flush()
-                    return pipeline
+    # DAG execution loop: find ready steps, execute them, repeat
+    max_iterations = len(steps) * 2  # Safety bound
+    for _ in range(max_iterations):
+        # Refresh step statuses
+        db.expire_all()
 
-        # Execute the step
-        step.status = "running"
-        step.started_at = datetime.now(timezone.utc)
-        pipeline.current_step = step.step_name
-        db.flush()
+        # Find "ready" steps: pending, all deps completed
+        ready = []
+        has_pending_approval = False
+        has_running = False
+        all_terminal = True  # Track if all steps are in terminal state
 
-        try:
-            # Build input for worker
-            worker_input = _build_worker_input(step, config, accumulated_output, pipeline)
+        for step in steps:
+            if step.status in ("completed", "failed", "skipped"):
+                continue
+            all_terminal = False
 
-            # Dispatch to worker
-            worker_fn = _import_worker(step.worker_type)
+            if step.status == "running":
+                has_running = True
+                continue
 
-            # rbac_check_worker needs db session
-            if step.worker_type == "rbac_check_worker":
-                result = worker_fn(worker_input, db=db)
-            else:
-                result = worker_fn(worker_input)
+            if step.status == "pending" and _has_pending_action(step):
+                has_pending_approval = True
+                continue
 
-            step.output_json = json.dumps(result)
+            # Check if all dependencies are completed
+            if step.status == "pending":
+                deps_met = True
+                if step.depends_on:
+                    dep_ids = json.loads(step.depends_on)
+                    for dep_id in dep_ids:
+                        dep = step_by_id.get(dep_id)
+                        if not dep or dep.status != "completed":
+                            deps_met = False
+                            break
+                        # Check if dependency failed (should not reach here, but safety)
+                        if dep.status == "failed":
+                            step.status = "failed"
+                            step.error_message = f"Dependency '{dep.step_name}' failed"
+                            db.flush()
+                            deps_met = False
+                            break
+                if deps_met:
+                    ready.append(step)
 
-            # Check for approval gate (rbac_check returns pending_action_id)
-            if result.get("pending_action_id") and not result.get("approved"):
-                step.status = "pending"  # Waiting for admin approval
+        # If all steps are terminal, pipeline is done
+        if all_terminal:
+            break
+
+        # If no steps are ready and we're waiting for approval, pause
+        if not ready and not has_running:
+            if has_pending_approval:
                 pipeline.status = "paused"
-                pipeline.current_step = step.step_name
+                db.flush()
+                logger.info("Pipeline paused for approval: id=%s", pipeline_id)
+                return pipeline
+            else:
+                # Deadlock or all remaining steps have failed deps
+                pipeline.status = "failed"
+                pipeline.error_message = "Pipeline stuck: no steps ready to execute"
+                pipeline.completed_at = datetime.now(timezone.utc)
+                db.flush()
+                return pipeline
+
+        if not ready:
+            # Steps are running but we can't parallelize more in this sync context
+            break
+
+        # Execute all ready steps
+        for step in ready:
+            step.status = "running"
+            step.started_at = datetime.now(timezone.utc)
+            pipeline.current_step = step.step_name
+            db.flush()
+
+            try:
+                worker_input = _build_worker_input(step, config, accumulated_output, pipeline)
+                worker_fn = _import_worker(step.worker_type)
+
+                # rbac_check_worker needs db session
+                if step.worker_type == "rbac_check_worker":
+                    result = worker_fn(worker_input, db=db)
+                else:
+                    result = worker_fn(worker_input)
+
+                step.output_json = json.dumps(result)
+
+                # Check for approval gate
+                if result.get("pending_action_id") and not result.get("approved"):
+                    step.status = "pending"  # Waiting for admin approval
+                    db.flush()
+
+                    await bus.publish("pipeline.approval.needed", {
+                        "pipeline_id": pipeline_id,
+                        "step_id": step.id,
+                        "step_name": step.step_name,
+                        "pending_action_id": result["pending_action_id"],
+                        "user_id": pipeline.user_id,
+                        "reason": result.get("reason", "Admin approval required"),
+                    })
+                    # Don't return — continue executing other branches
+                    continue
+
+                # Check for failure
+                worker_failed = result.get("success") is False or result.get("approved") is False
+                if worker_failed and result.get("error"):
+                    step.status = "failed"
+                    step.error_message = result["error"]
+                    step.completed_at = datetime.now(timezone.utc)
+                    db.flush()
+
+                    await bus.publish("pipeline.step.failed", {
+                        "pipeline_id": pipeline_id,
+                        "step_name": step.step_name,
+                        "error": result["error"],
+                        "user_id": pipeline.user_id,
+                    })
+
+                    # Fail dependent steps
+                    _fail_dependents(db, steps, step)
+                    continue
+
+                # Step completed
+                step.status = "completed"
+                step.completed_at = datetime.now(timezone.utc)
+                accumulated_output.update(result)
                 db.flush()
 
-                await bus.publish("pipeline.approval.needed", {
+                await bus.publish("pipeline.step.completed", {
                     "pipeline_id": pipeline_id,
                     "step_id": step.id,
                     "step_name": step.step_name,
-                    "pending_action_id": result["pending_action_id"],
                     "user_id": pipeline.user_id,
-                    "reason": result.get("reason", "Admin approval required"),
                 })
-                return pipeline
 
-            # Check for failure — worker returned explicit error
-            worker_failed = result.get("success") is False or result.get("approved") is False
-            if worker_failed and result.get("error"):
+                # Record deployment if deploy step succeeded
+                if step.step_name == "deploy" and result.get("success") and result.get("contract_address"):
+                    _record_deployment(db, pipeline, result, config)
+
+                # Update deployment record if transfer completed
+                if step.step_name == "transfer_ownership" and result.get("success"):
+                    _update_deployment_ownership(db, pipeline, result)
+
+            except Exception as e:
                 step.status = "failed"
-                step.error_message = result["error"]
+                step.error_message = str(e)
                 step.completed_at = datetime.now(timezone.utc)
-                pipeline.status = "failed"
-                pipeline.error_message = f"Step '{step.step_name}' failed: {result['error']}"
-                pipeline.completed_at = datetime.now(timezone.utc)
                 db.flush()
+                logger.exception("Pipeline step failed: pipeline=%s step=%s", pipeline_id, step.step_name)
 
-                await bus.publish("pipeline.run.failed", {
+                await bus.publish("pipeline.step.failed", {
                     "pipeline_id": pipeline_id,
                     "step_name": step.step_name,
-                    "error": result["error"],
+                    "error": str(e),
                     "user_id": pipeline.user_id,
                 })
-                return pipeline
 
-            # Step completed
-            step.status = "completed"
-            step.completed_at = datetime.now(timezone.utc)
-            accumulated_output.update(result)
-            db.flush()
+                _fail_dependents(db, steps, step)
 
-            await bus.publish("pipeline.step.completed", {
-                "pipeline_id": pipeline_id,
-                "step_id": step.id,
-                "step_name": step.step_name,
-                "user_id": pipeline.user_id,
-            })
-
-            # Record deployment if deploy step succeeded
-            if step.step_name == "deploy" and result.get("success") and result.get("contract_address"):
-                _record_deployment(db, pipeline, result, config)
-
-            # Update deployment record if transfer completed
-            if step.step_name == "transfer_ownership" and result.get("success"):
-                _update_deployment_ownership(db, pipeline, result)
-
-        except Exception as e:
-            step.status = "failed"
-            step.error_message = str(e)
-            step.completed_at = datetime.now(timezone.utc)
+    # Determine final pipeline status
+    statuses = {s.status for s in steps}
+    if "failed" in statuses and not {"pending", "running"} & statuses:
+        # Some steps failed, no steps are still running/pending
+        non_failed = [s for s in steps if s.status != "failed" and s.status != "skipped"]
+        if all(s.status == "completed" for s in non_failed):
+            # Partial success: some branches completed, some failed
+            pipeline.status = "completed"  # or "partial" if we add that status
+        else:
             pipeline.status = "failed"
-            pipeline.error_message = f"Step '{step.step_name}' exception: {e}"
-            pipeline.completed_at = datetime.now(timezone.utc)
-            db.flush()
-            logger.exception("Pipeline step failed: pipeline=%s step=%s", pipeline_id, step.step_name)
+        pipeline.error_message = "One or more steps failed"
+    elif all(s.status in ("completed", "skipped") for s in steps):
+        pipeline.status = "completed"
+    elif "pending" in statuses:
+        pipeline.status = "paused"
+    else:
+        pipeline.status = "running"
 
-            await bus.publish("pipeline.run.failed", {
-                "pipeline_id": pipeline_id,
-                "step_name": step.step_name,
-                "error": str(e),
-                "user_id": pipeline.user_id,
-            })
-            return pipeline
+    if pipeline.status in ("completed", "failed"):
+        pipeline.completed_at = datetime.now(timezone.utc)
+        pipeline.current_step = None
+        pipeline.result_json = json.dumps(accumulated_output)
 
-    # All steps completed
-    pipeline.status = "completed"
-    pipeline.current_step = None
-    pipeline.result_json = json.dumps(accumulated_output)
-    pipeline.completed_at = datetime.now(timezone.utc)
     db.flush()
 
-    await bus.publish("pipeline.run.completed", {
-        "pipeline_id": pipeline_id,
-        "pipeline_type": pipeline.pipeline_type,
-        "user_id": pipeline.user_id,
-        "result": accumulated_output,
-    })
+    if pipeline.status == "completed":
+        await bus.publish("pipeline.run.completed", {
+            "pipeline_id": pipeline_id,
+            "pipeline_type": pipeline.pipeline_type,
+            "user_id": pipeline.user_id,
+            "result": accumulated_output,
+        })
+        logger.info("Pipeline completed: id=%s type=%s", pipeline_id, pipeline.pipeline_type)
+    elif pipeline.status == "failed":
+        await bus.publish("pipeline.run.failed", {
+            "pipeline_id": pipeline_id,
+            "pipeline_type": pipeline.pipeline_type,
+            "user_id": pipeline.user_id,
+            "error": pipeline.error_message,
+        })
 
-    logger.info("Pipeline completed: id=%s type=%s", pipeline_id, pipeline.pipeline_type)
     return pipeline
+
+
+def _has_pending_action(step: PipelineStep) -> bool:
+    """Check if a step is waiting for admin approval (has pending_action_id in output)."""
+    if not step.output_json:
+        return False
+    try:
+        output = json.loads(step.output_json)
+        return bool(output.get("pending_action_id") and not output.get("approved"))
+    except (json.JSONDecodeError, TypeError):
+        return False
+
+
+def _fail_dependents(db: Session, all_steps: list, failed_step: PipelineStep):
+    """Mark all steps that depend on a failed step as failed."""
+    for step in all_steps:
+        if step.status not in ("pending",):
+            continue
+        if step.depends_on:
+            dep_ids = json.loads(step.depends_on)
+            if failed_step.id in dep_ids:
+                step.status = "failed"
+                step.error_message = f"Dependency '{failed_step.step_name}' failed"
+                step.completed_at = datetime.now(timezone.utc)
+    db.flush()
 
 
 # ── Pipeline Resume (after admin approval) ────────────────────────
@@ -350,7 +463,15 @@ async def resume_pipeline(db: Session, pipeline_id: str) -> PipelineRun:
 # ── Admin Approval ────────────────────────────────────────────────
 
 async def approve_action(db: Session, action_id: str, reviewer_id: str, note: Optional[str] = None) -> dict:
-    """Approve a pending action and resume its pipeline if linked."""
+    """
+    Approve a pending action and execute it.
+
+    For pipeline-linked actions: resumes the paused pipeline.
+    For GROOT wallet actions (groot_transfer_funds, contract_call):
+      reconstructs GROOT's wallet, signs, broadcasts, zeros key.
+
+    Only callable by master_admin (enforced at route layer).
+    """
     action = db.query(PendingAction).filter(PendingAction.id == action_id).first()
     if not action:
         return {"error": "Action not found"}
@@ -363,8 +484,18 @@ async def approve_action(db: Session, action_id: str, reviewer_id: str, note: Op
     action.reviewed_at = datetime.now(timezone.utc)
     db.flush()
 
-    # Resume linked pipeline
     result = {"action_id": action_id, "status": "approved"}
+
+    # Execute GROOT wallet operations that are NOT pipeline-linked
+    if action.action_type == "groot_transfer_funds" and not action.pipeline_step_id:
+        tx_result = _execute_groot_transfer(action, reviewer_id)
+        result.update(tx_result)
+
+    elif action.action_type == "contract_call" and not action.pipeline_step_id:
+        tx_result = _execute_groot_contract_call(action, reviewer_id)
+        result.update(tx_result)
+
+    # Resume linked pipeline (standard deployment flow)
     if action.pipeline_step_id:
         step = db.query(PipelineStep).filter(PipelineStep.id == action.pipeline_step_id).first()
         if step:
@@ -376,11 +507,149 @@ async def approve_action(db: Session, action_id: str, reviewer_id: str, note: Op
 
     await EventBus.get().publish("pipeline.action.approved", {
         "action_id": action_id,
+        "action_type": action.action_type,
         "user_id": action.user_id,
         "reviewer_id": reviewer_id,
     })
 
     return result
+
+
+def _execute_groot_transfer(action: PendingAction, reviewer_id: str) -> dict:
+    """Execute a GROOT wallet ETH transfer after master_admin approval."""
+    try:
+        payload = json.loads(action.payload_json or "{}")
+        to_address = payload.get("to")
+        amount_eth = payload.get("amount_eth")
+        chain = payload.get("chain", "base")
+
+        if not to_address or not amount_eth:
+            return {"tx_error": "Missing to or amount_eth in payload"}
+
+        from web3 import Web3
+        from api.services.wizard_workers import CHAIN_RPC, CHAIN_IDS
+        from api.database import get_internal_db
+        from api.services.wallet_service import (
+            get_groot_wallet_address, sign_transaction_with_groot_wallet
+        )
+
+        rpc_url = CHAIN_RPC.get(chain)
+        if not rpc_url:
+            return {"tx_error": f"Unknown chain: {chain}"}
+
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        with get_internal_db() as int_db:
+            groot_address = get_groot_wallet_address(int_db)
+            if not groot_address:
+                return {"tx_error": "GROOT wallet not initialized"}
+
+            # Build transfer transaction
+            nonce = w3.eth.get_transaction_count(Web3.to_checksum_address(groot_address))
+            value_wei = w3.to_wei(float(amount_eth), "ether")
+            chain_id = CHAIN_IDS.get(chain, w3.eth.chain_id)
+
+            tx_dict = {
+                "to": Web3.to_checksum_address(to_address),
+                "value": value_wei,
+                "gas": 21000,
+                "gasPrice": w3.eth.gas_price,
+                "nonce": nonce,
+                "chainId": chain_id,
+            }
+
+            # Sign with GROOT's wallet (reconstructs key, signs, zeros)
+            raw_tx = sign_transaction_with_groot_wallet(
+                int_db, tx_dict, admin_user_id=reviewer_id
+            )
+
+        # Broadcast
+        tx_hash = w3.eth.send_raw_transaction(bytes.fromhex(raw_tx[2:] if raw_tx.startswith("0x") else raw_tx))
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+
+        logger.info(
+            "GROOT transfer executed: to=%s amount=%s chain=%s tx=%s approved_by=%s",
+            to_address, amount_eth, chain, tx_hash.hex(), reviewer_id,
+        )
+        return {
+            "tx_hash": tx_hash.hex(),
+            "tx_status": "success" if receipt.status == 1 else "reverted",
+            "gas_used": receipt.gasUsed,
+        }
+
+    except Exception as e:
+        logger.exception("GROOT transfer failed: action=%s", action.id)
+        return {"tx_error": str(e)}
+
+
+def _execute_groot_contract_call(action: PendingAction, reviewer_id: str) -> dict:
+    """Execute a GROOT wallet contract call (cag_act) after master_admin approval."""
+    try:
+        payload = json.loads(action.payload_json or "{}")
+        function_name = payload.get("function_name")
+        args = payload.get("args", [])
+        contract_address = payload.get("contract_address")
+        chain = payload.get("chain", "base")
+        function_abi = payload.get("function_abi")
+
+        if not all([function_name, contract_address, function_abi]):
+            return {"tx_error": "Missing function_name, contract_address, or function_abi"}
+
+        from web3 import Web3
+        from api.services.wizard_workers import CHAIN_RPC, CHAIN_IDS
+        from api.database import get_internal_db
+        from api.services.wallet_service import (
+            get_groot_wallet_address, sign_transaction_with_groot_wallet
+        )
+
+        rpc_url = CHAIN_RPC.get(chain)
+        if not rpc_url:
+            return {"tx_error": f"Unknown chain: {chain}"}
+
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        with get_internal_db() as int_db:
+            groot_address = get_groot_wallet_address(int_db)
+            if not groot_address:
+                return {"tx_error": "GROOT wallet not initialized"}
+
+            # Build the contract call transaction
+            contract = w3.eth.contract(
+                address=Web3.to_checksum_address(contract_address),
+                abi=[function_abi],
+            )
+            fn = getattr(contract.functions, function_name)
+            chain_id = CHAIN_IDS.get(chain, w3.eth.chain_id)
+            nonce = w3.eth.get_transaction_count(Web3.to_checksum_address(groot_address))
+
+            tx_dict = fn(*args).build_transaction({
+                "from": Web3.to_checksum_address(groot_address),
+                "nonce": nonce,
+                "gasPrice": w3.eth.gas_price,
+                "chainId": chain_id,
+            })
+
+            # Sign with GROOT's wallet
+            raw_tx = sign_transaction_with_groot_wallet(
+                int_db, tx_dict, admin_user_id=reviewer_id
+            )
+
+        # Broadcast
+        tx_hash = w3.eth.send_raw_transaction(bytes.fromhex(raw_tx[2:] if raw_tx.startswith("0x") else raw_tx))
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+
+        logger.info(
+            "GROOT contract call executed: fn=%s contract=%s chain=%s tx=%s approved_by=%s",
+            function_name, contract_address, chain, tx_hash.hex(), reviewer_id,
+        )
+        return {
+            "tx_hash": tx_hash.hex(),
+            "tx_status": "success" if receipt.status == 1 else "reverted",
+            "gas_used": receipt.gasUsed,
+            "function": function_name,
+        }
+
+    except Exception as e:
+        logger.exception("GROOT contract call failed: action=%s", action.id)
+        return {"tx_error": str(e)}
 
 
 async def reject_action(db: Session, action_id: str, reviewer_id: str, note: Optional[str] = None) -> dict:
@@ -602,6 +871,56 @@ def _build_worker_input(step: PipelineStep, config: dict, accumulated: dict, pip
             "new_owner": base.get("new_owner") or base.get("user_wallet_address"),
             "chain": base.get("chain", "sepolia"),
             "rpc_url": base.get("rpc_url"),
+        }
+
+    elif step.step_name == "parse":
+        return {
+            "abi": accumulated.get("abi", base.get("abi", [])),
+            "contract_name": accumulated.get("contract_name", base.get("contract_name", "Contract")),
+            "source_code": accumulated.get("source_code", base.get("source_code")),
+            "chain": base.get("chain", "sepolia"),
+            "contract_address": accumulated.get("contract_address"),
+            "user_id": pipeline.user_id,
+            "user_namespace": base.get("user_namespace", f"@{pipeline.user_id}"),
+            "is_public": base.get("is_public", False),
+            "description": base.get("description"),
+            "tags": base.get("tags"),
+            "contract_id": base.get("contract_id"),
+        }
+
+    elif step.step_name == "reparse":
+        # Re-parse after deployment — now we have the live contract address
+        return {
+            "abi": accumulated.get("abi", base.get("abi", [])),
+            "contract_name": accumulated.get("contract_name", base.get("contract_name", "Contract")),
+            "source_code": accumulated.get("source_code", base.get("source_code")),
+            "chain": base.get("chain", "sepolia"),
+            "contract_address": accumulated.get("contract_address"),
+            "user_id": pipeline.user_id,
+            "user_namespace": base.get("user_namespace", f"@{pipeline.user_id}"),
+            "is_public": base.get("is_public", True),  # Public after deployment
+            "description": base.get("description"),
+            "tags": base.get("tags"),
+        }
+
+    elif step.step_name == "frontend":
+        return {
+            "sdk_json": accumulated.get("sdk_json", {}),
+            "contract_name": accumulated.get("contract_name", base.get("contract_name", "DApp")),
+            "chain": base.get("chain", "sepolia"),
+            "contract_address": accumulated.get("contract_address", base.get("contract_address", "")),
+            "brand": base.get("brand", {"primary": "#FF6B00", "background": "#1A1A2E"}),
+            "user_id": pipeline.user_id,
+        }
+
+    elif step.step_name == "appstore":
+        return {
+            "dapp_build_id": accumulated.get("dapp_build_id"),
+            "sdk_json": accumulated.get("sdk_json", {}),
+            "contract_name": accumulated.get("contract_name", base.get("contract_name", "DApp")),
+            "contract_address": accumulated.get("contract_address"),
+            "chain": base.get("chain", "sepolia"),
+            "user_id": pipeline.user_id,
         }
 
     # Fallback: pass everything

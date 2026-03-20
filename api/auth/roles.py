@@ -11,7 +11,7 @@ from api.models.internal import RoleAssignment, AdminAuditLog
 import uuid
 
 
-VALID_ROLES = {"admin", "operator", "readonly"}
+VALID_ROLES = {"master_admin", "admin", "operator", "readonly"}
 
 
 def get_user_roles(db: Session, user_id: str) -> list[str]:
@@ -33,8 +33,25 @@ def has_role(db: Session, user_id: str, role: str) -> bool:
 
 
 def is_admin(db: Session, user_id: str) -> bool:
-    """Check if a user has the admin role."""
-    return has_role(db, user_id, "admin")
+    """Check if a user has admin or master_admin role."""
+    return db.query(RoleAssignment).filter(
+        RoleAssignment.user_id == user_id,
+        RoleAssignment.role.in_(["admin", "master_admin"]),
+        RoleAssignment.is_active == True,  # noqa: E712
+    ).first() is not None
+
+
+def is_master_admin(db: Session, user_id: str) -> bool:
+    """
+    Check if a user has the master_admin role.
+    Master admin has exclusive control over GROOT's wallet, activity, rights, and utility.
+    Only master_admin can:
+      - Initialize, change, or manage GROOT's wallet
+      - Approve/reject Tier 2 actions (deploy, transfer, state-changing calls)
+      - Grant/revoke the master_admin role to others
+      - Access GROOT wallet balance, transactions, and transfer endpoints
+    """
+    return has_role(db, user_id, "master_admin")
 
 
 def grant_role(

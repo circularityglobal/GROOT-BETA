@@ -17,6 +17,16 @@ memory:
   episodic_ttl_days: 90
   working_clear_on_new_task: true
   procedural_update_threshold: 0.8  # Only update patterns with >80% success rate
+  # Vector memory (Tier 5) — sqlite-vec KNN search
+  vector:
+    enabled: true
+    dedup_threshold: 0.95            # Cosine similarity threshold for deduplication
+    decay_rate: 0.01                 # Daily importance decay rate
+    recency_window_days: 90          # Days for recency boost calculation
+    default_top_k: 5                 # Default number of results
+    similarity_weight: 0.7           # Weight for similarity in composite score
+    importance_weight: 0.2           # Weight for importance in composite score
+    recency_weight: 0.1              # Weight for recency in composite score
 
 orchestration:
   max_iterations: 5
@@ -48,6 +58,15 @@ tools:
     - get_document_tags
     - list_scripts
     - execute_script
+    # CAG tools — GROOT uses the contract registry as its logic repository
+    - cag_query              # Search public contract SDKs
+    - cag_execute            # Read on-chain state (view/pure calls, no gas)
+    - cag_act                # Request state-changing calls (requires master_admin approval)
+    # Wizard pipeline tools — GROOT deploys contracts using its wallet
+    - wizard_pipeline        # Full source→DApp pipeline
+    - compile_contract       # Compile only
+    - compile_test           # Compile + test
+    - deploy_contract        # Full deployment pipeline
   sandbox:
     enabled: false            # Admin-only, disabled by default
     timeout_seconds: 30

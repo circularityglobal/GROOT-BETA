@@ -381,14 +381,19 @@ Keep the plan concise (1-5 steps). Use available tools when helpful."""
                 step_result.result = {"content": result.get("content", "")}
                 step_result.tokens_used = result.get("prompt_tokens", 0) + result.get("completion_tokens", 0)
 
-            elif action in ("deploy_contract", "compile_contract", "compile_test"):
-                # Pipeline dispatch — wizard worker pipeline
+            elif action in ("deploy_contract", "compile_contract", "compile_test", "wizard_pipeline"):
+                # Pipeline dispatch — GROOT is the sole Wizard
+                # All deployments go through GROOT's wallet via the wizard pipeline
                 step_result.tool_name = action
                 step_result.tool_args = args
                 try:
                     from api.services.dag_orchestrator import create_pipeline
-                    pipeline_type = {"deploy_contract": "deploy", "compile_contract": "compile_test",
-                                     "compile_test": "compile_test"}.get(action, "compile_test")
+                    pipeline_type = {
+                        "deploy_contract": "deploy",
+                        "compile_contract": "compile_test",
+                        "compile_test": "compile_test",
+                        "wizard_pipeline": "wizard",
+                    }.get(action, "compile_test")
                     pipeline = create_pipeline(
                         self.db, self.user_id, pipeline_type,
                         config=args, agent_task_id=task.id,
@@ -398,8 +403,64 @@ Keep the plan concise (1-5 steps). Use available tools when helpful."""
                         "pipeline_id": pipeline.id,
                         "pipeline_type": pipeline.pipeline_type,
                         "status": pipeline.status,
-                        "message": f"Pipeline '{pipeline_type}' created — runs asynchronously",
+                        "message": f"Pipeline '{pipeline_type}' created — GROOT will deploy using its wallet",
                     }
+                except Exception as e:
+                    step_result.error = str(e)
+
+            # ── CAG Tools: GROOT reads and acts on the contract registry ──
+            elif action == "cag_query":
+                # Search public SDKs — autonomous, no approval needed
+                step_result.tool_name = "cag_query"
+                step_result.tool_args = args
+                try:
+                    from api.services.contract_brain import cag_query
+                    results = cag_query(
+                        self.db,
+                        query=args.get("query", ""),
+                        chain=args.get("chain"),
+                        max_results=args.get("max_results", 3),
+                    )
+                    step_result.result = {"contracts": results, "count": len(results)}
+                except Exception as e:
+                    step_result.error = str(e)
+
+            elif action == "cag_execute":
+                # Read on-chain state via view/pure calls — autonomous, no gas
+                step_result.tool_name = "cag_execute"
+                step_result.tool_args = args
+                try:
+                    from api.services.contract_brain import cag_execute
+                    result = cag_execute(
+                        self.db,
+                        contract_address=args.get("contract_address", ""),
+                        chain=args.get("chain", "base"),
+                        function_name=args.get("function_name", ""),
+                        args=args.get("args", []),
+                    )
+                    step_result.result = result
+                    if not result.get("success"):
+                        step_result.error = result.get("error")
+                except Exception as e:
+                    step_result.error = str(e)
+
+            elif action == "cag_act":
+                # State-changing call — creates PendingAction for master_admin approval
+                step_result.tool_name = "cag_act"
+                step_result.tool_args = args
+                try:
+                    from api.services.contract_brain import cag_act
+                    result = cag_act(
+                        self.db,
+                        user_id=self.user_id,
+                        contract_address=args.get("contract_address", ""),
+                        chain=args.get("chain", "base"),
+                        function_name=args.get("function_name", ""),
+                        args=args.get("args", []),
+                    )
+                    step_result.result = result
+                    if not result.get("success"):
+                        step_result.error = result.get("error")
                 except Exception as e:
                     step_result.error = str(e)
 

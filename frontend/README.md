@@ -43,9 +43,26 @@ Key variable: `NEXT_PUBLIC_API_URL` — Backend API base URL.
 | `/webhooks` | `app/webhooks/` | Webhook subscription management |
 | `/network` | `app/network/` | P2P network visualization |
 | `/settings` | `app/settings/` | User settings (wallet, auth, preferences) |
-| `/admin` | `app/admin/` | Admin dashboard (users, roles, config) |
+| `/pipeline` | `app/pipeline/` | Wizard pipeline — start, monitor DAG, approve |
+| `/deployments` | `app/deployments/` | GROOT-deployed contracts, transfer ownership |
+| `/dapp` | `app/dapp/` | DApp factory — templates, build, validate, download |
+| `/admin` | `app/admin/` | Admin dashboard (users, roles, wallet, networks, actions) |
 | `/docs` | `app/docs/` | Documentation viewer |
 | `/u/[username]` | `app/u/` | Public user profiles |
+
+### Admin Dashboard Tabs
+| Tab | Description |
+|---|---|
+| Stats | Platform metrics and usage |
+| Users | User management and role assignment |
+| Reviews | App Store submission review |
+| Store | App listing management |
+| Providers | AI model provider health and config |
+| Wallets | GROOT wallet info, balance, pending actions, provider config |
+| Networks | Dynamic EVM chain registry — list, add, import from chainlist.org |
+| Audit | Append-only audit log |
+| MCP | MCP server registry |
+| Secrets | Encrypted secrets management |
 
 ## Components
 

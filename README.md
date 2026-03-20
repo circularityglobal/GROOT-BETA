@@ -12,9 +12,14 @@ Groot is the AI that lives in REFINET Cloud. Talk to it at `app.refinet.io`. By 
 
 Groot also connects to **any AI provider** through the Universal Model Gateway: Google Gemini (free tier), Ollama, LM Studio, OpenRouter, and user-provided keys for OpenAI, Anthropic, Groq, Mistral, Replicate, Stability AI, Together AI, Perplexity, and more. Switch models in the chat header or bring your own API keys in Settings.
 
+Groot is a **Wizard** — an agent with a wallet and the ability to act on-chain. It is the **sole Wizard** in the REFINET ecosystem. Users interact with GROOT to deploy contracts, query on-chain state, and request transactions. GROOT never acts alone — every on-chain action requires **master_admin** approval.
+
 Groot is augmented with two knowledge systems:
 - **RAG** (Retrieval-Augmented Generation) — searches a curated knowledge base of documents, PDFs, spreadsheets, and markdown before every response
-- **CAG** (Contract-Augmented Generation) — searches user-uploaded smart contract ABIs and SDK definitions for blockchain-aware answers
+- **CAG** (Contract-Augmented Generation) — searches public smart contract ABIs and SDK definitions for blockchain-aware answers. Three access modes:
+  - **Query** — search public SDKs to answer questions (autonomous)
+  - **Execute** — call view/pure functions on-chain to read state (autonomous, no gas)
+  - **Act** — request state-changing transactions (creates PendingAction for master_admin approval)
 
 ## Platform Features
 
@@ -43,18 +48,23 @@ Groot is augmented with two knowledge systems:
 - YAML configuration hierarchy (default → production → ENV)
 
 ### Wizard Pipeline (DAG Orchestrator)
-- Compile → Test → RBAC Check → Deploy → Verify → Transfer Ownership
-- 3 pipeline templates: `compile_test`, `deploy`, `full`
-- 6 deterministic wizard workers: compile (solc/registry ABI), test (bytecode + ABI validation), RBAC check (tier-based + PendingAction for admin approval), deploy (SSS key reconstruction + web3.py broadcast), verify (block explorer API), transfer ownership
-- Admin approval gates for mainnet deployments (PendingAction model)
+- **GROOT is the sole Wizard** — all deployments are signed by GROOT's SSS-secured wallet
+- Full wizard pipeline: Compile → Test → Parse → RBAC → Deploy → Re-Parse → Frontend → App Store
+- **Parallel execution**: frontend generation runs alongside deployment approval (both depend on parse, not each other)
+- 4 pipeline templates: `compile_test`, `deploy`, `full`, `wizard` (source code → live DApp)
+- 9 deterministic workers: compile (Hardhat/solc), test (static analysis + Hardhat), parse (ABI → SDK), RBAC check (tier-based + PendingAction), deploy (GROOT wallet signs), verify (block explorer), transfer ownership, frontend (DApp generation), appstore (submission)
+- Master admin approval gates for all Tier 2 actions (deploy, transfer, state-changing calls)
 - Pipeline state tracking with per-step status, input/output, and error capture
 - EventBus integration: `pipeline.step.completed`, `pipeline.run.completed`, `pipeline.approval.needed`
 
 ### Contract Deployment & Ownership
+- GROOT deploys every contract using its sole wallet — users never need gas
 - Track every contract GROOT deploys on-chain (DeploymentRecord)
 - On-chain ownership verification via `owner()` call
-- Ownership transfer from GROOT's custodial wallet to user wallet
-- Multi-chain support: Ethereum, Sepolia, Base, Polygon, Arbitrum, Optimism
+- Ownership transfer from GROOT's wallet to user's personal wallet
+- **Dynamic chain registry** — admin can add any EVM chain via chainlist.org from the dashboard
+- **Multi-chain contract deployments** — one ABI can be deployed on Ethereum, Base, Polygon, Arbitrum, and more
+- Supported chains seeded at startup; new chains added dynamically via `POST /admin/chains/import`
 
 ### Smart Contract Registry
 - GitHub-style project management (create, star, fork)
@@ -174,7 +184,7 @@ response = client.chat.completions.create(
 )
 ```
 
-### API Surface (287 endpoints across 27 route groups)
+### API Surface (302+ endpoints across 29 route groups)
 
 | Route Group | Endpoints | Auth |
 |---|---|---|
@@ -188,10 +198,10 @@ response = client.chat.completions.create(
 | `/keys/*` | 5 | Full Auth (SIWE+Password+TOTP) |
 | `/provider-keys/*` | 6 | Full Auth (SIWE+Password+TOTP) |
 | `/knowledge/*` | 36 | Admin (write), any (search) |
-| `/admin/*` | 47 | Admin role |
+| `/admin/*` | 55 | Admin role (wallet/chains: master_admin) |
 | `/registry/*` | 27 | JWT |
 | `/repo/*` | 14 | JWT |
-| `/explore/*` | 5 | No |
+| `/explore/*` | 8 | No (cag/act requires JWT) |
 | `/identity/*` | 9 | JWT |
 | `/messages/*` | 9 | JWT |
 | `/p2p/*` | 12 | JWT |
@@ -199,10 +209,12 @@ response = client.chat.completions.create(
 | `/dapp/*` | 6 | JWT |
 | `/submissions/*` | 8 | JWT |
 | `/app-store/*` | 12 | JWT |
-| `/pipeline/*` | 8 | JWT (admin for approvals) |
+| `/pipeline/*` | 10 | JWT (approvals: master_admin) |
+| `/workers/*` | 7 | JWT (deploy/rbac/verify: master_admin) |
 | `/deployments/*` | 4 | JWT |
 | `/payments/*` | 10 | JWT (admin for fee config) |
 | `/broker/*` | 6 | JWT |
+| `/vector-memory/*` | 5 | JWT |
 | `/graphql` | 1 | JWT or API key |
 | `/soap` | 1 | JWT or API key |
 | `/ws` | 1 | JWT or API key |
@@ -225,8 +237,10 @@ Any device that can send HTTP POST requests can register, send telemetry, and re
 ### Authorization
 - JWT with scope-based access control (12 scope types)
 - API keys with per-key rate limits and expiration
-- Role-based admin access (admin, operator, readonly)
+- Role-based admin access: **master_admin** (GROOT wallet + approvals), admin, operator, readonly
+- **Master admin** has exclusive control over GROOT's wallet, Tier 2 approvals, and chain management
 - Tier-based access control (free, developer, pro, admin) with pipeline RBAC enforcement
+- Admin secret header (`X-Admin-Secret`) audited in admin_audit_log — does NOT bypass master_admin gates
 
 ### Data Protection
 - Dual-database architecture: `public.db` (user data) + `internal.db` (admin/secrets)
@@ -241,10 +255,10 @@ Any device that can send HTTP POST requests can register, send telemetry, and re
 
 | Component | Technology |
 |---|---|
-| Backend | FastAPI 0.115.x + SQLAlchemy 2.0 + SQLite (WAL, dual DB, 69 tables) |
+| Backend | FastAPI 0.115.x + SQLAlchemy 2.0 + SQLite (WAL, dual DB, 71+ tables) |
 | Inference | BitNet b1.58 2B4T via bitnet.cpp (CPU-native, ARM-optimized) |
-| Agent Engine | 6-phase cognitive loop + 4-tier memory + SOUL.md identity + MCP tool dispatch |
-| Wizard Pipeline | DAG orchestrator + 6 deterministic workers + PendingAction approval gates |
+| Agent Engine | 6-phase cognitive loop + 5-tier memory + SOUL.md identity + MCP tool dispatch + CAG |
+| Wizard Pipeline | DAG orchestrator + 9 workers + parallel execution + PendingAction approval gates |
 | Frontend | Next.js 14 App Router + React 18 + TypeScript + Tailwind CSS |
 | Web3 | wagmi + viem (native wallet connectors, SIWE) + web3.py + eth-account (backend) |
 | Auth | Argon2id + PyJWT + pyotp + SIWE (EIP-4361) |

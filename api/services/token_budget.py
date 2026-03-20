@@ -19,15 +19,16 @@ DEFAULT_LAYER_BUDGETS = {
     "soul": 300,        # Layer 0: Root SOUL.md — guaranteed
     "agent_soul": 200,  # Layer 1: Per-agent SOUL — guaranteed
     "memory": 100,      # Layer 2: Memory state — flexible
-    "rag": 400,         # Layer 3: RAG context — flexible (first to truncate)
+    "rag": 300,         # Layer 3: RAG context — flexible (first to truncate)
+    "cag": 200,         # Layer 3.5: CAG context — flexible (contract SDKs for GROOT)
     "skills": 50,       # Layer 4: Skills metadata — flexible
     "safety": 150,      # Layer 5: SAFETY.md — guaranteed
     "runtime": 50,      # Layer 6: Runtime context — guaranteed
-    "user_prompt": 286, # Remaining for user content
+    "user_prompt": 186, # Remaining for user content
 }
 
 # Layers that can be truncated when over budget (in truncation order)
-FLEXIBLE_LAYERS = ["rag", "memory", "skills"]
+FLEXIBLE_LAYERS = ["rag", "cag", "memory", "skills"]
 
 # Layers that are never truncated
 GUARANTEED_LAYERS = ["soul", "safety", "agent_soul", "runtime"]

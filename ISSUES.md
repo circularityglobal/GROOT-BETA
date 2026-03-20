@@ -41,18 +41,27 @@ All 9 architecture gaps identified in the agent architecture audit have been clo
 
 | Gap | Status | Implementation |
 |---|---|---|
-| DAG orchestrator for worker pipeline | CLOSED | `dag_orchestrator.py` — 3 pipeline templates |
-| Wizard workers (compile, test, deploy) | CLOSED | `wizard_workers.py` — 6 workers |
-| PendingAction approval flow | CLOSED | `PendingAction` model + admin approve/reject endpoints |
+| DAG orchestrator for worker pipeline | CLOSED | `dag_orchestrator.py` — 4 pipeline templates (compile_test, deploy, full, **wizard**) |
+| Wizard workers (compile, test, deploy) | CLOSED | `wizard_workers.py` — **9 workers** (compile, test, parse, RBAC, deploy, verify, transfer, frontend, appstore) |
+| GROOT as sole Wizard | CLOSED | `deploy_worker` + `transfer_ownership_worker` use GROOT wallet exclusively |
+| PendingAction approval flow | CLOSED | `PendingAction` model + **master_admin** approve/reject endpoints |
 | RBAC worker for permission enforcement | CLOSED | `rbac_check_worker` with tier-based + admin gates |
 | Deployment tracking + ownership transfer | CLOSED | `DeploymentRecord` model + `ownership.py` |
+| CAG three access modes (Query/Execute/Act) | CLOSED | `contract_brain.py` — cag_query, cag_execute, cag_act |
+| Dynamic chain registry | CLOSED | `SupportedChain` model + `chain_registry.py` + chainlist.org import |
+| Multi-chain contract deployments | CLOSED | `ContractDeployment` model + flat ABI folder structure |
+| Master admin role | CLOSED | `master_admin` role gates all GROOT wallet + Tier 2 actions |
 | Broker session management | CLOSED | `BrokerSession` model + `broker.py` service |
 | Fee schedule + pricing | CLOSED | `FeeSchedule` model + `payment_service.py` |
 | Three-token payment (CIFI/USDC/REFI) | CLOSED | `PaymentRecord` with token tracking |
 | Revenue split execution | CLOSED | `RevenueSplit` model + `execute_revenue_split()` |
 | Tag taxonomy for contract discovery | CLOSED | `tag_taxonomy.py` — 11 categories, 95 subcategories |
 | DApp validation (npm + tsc) | CLOSED | `dapp_validator.py` + self-repair loop |
-| Missing execution scripts (~14) | CLOSED | 36 total scripts (was 22) |
+| Block explorer ABI fetch | CLOSED | `GET /explore/fetch-abi` + frontend "Import from Explorer" |
+| Contract testing UI | CLOSED | "Test" button on view/pure functions in repo page |
+| Performance indexes | CLOSED | Migration 015 — 15+ indexes + FTS5 for contract search |
+| Frontend wizard pages | CLOSED | `/pipeline`, `/deployments`, `/dapp`, admin Networks/Wallet/Actions panels |
+| Missing execution scripts (~14) | CLOSED | 40+ total scripts |
 | XMTP integration | CLOSED (stub) | `xmtp.py` — protocol wrapper with internal fallback |
 
 ---

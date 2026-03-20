@@ -308,6 +308,112 @@ class RefinetAPI {
   checkProviderHealth = () => this.get('/admin/providers/health')
   getProviderUsage = (period: string = 'day') => this.get(`/admin/providers/usage?period=${period}`)
   updateProviderConfig = (key: string, value: string) => this.post('/admin/providers/config', { key, value })
+
+  // ── Wizard Pipeline (GROOT deploys using its wallet) ─────
+  startWizardPipeline = (data: {
+    source_code?: string; registry_project_id?: string;
+    chain?: string; constructor_args?: any[];
+    compiler_version?: string; new_owner?: string;
+    brand?: { primary: string; background: string };
+    contract_name?: string; is_public?: boolean;
+  }) => this.post('/pipeline/start', data)
+
+  startCompileTest = (data: { source_code?: string; abi?: any[]; bytecode?: string }) =>
+    this.post('/pipeline/compile-test', data)
+
+  startDeploy = (data: {
+    source_code?: string; chain?: string; constructor_args?: any[];
+    new_owner?: string; user_wallet_address?: string;
+  }) => this.post('/pipeline/deploy', data)
+
+  listPipelines = (limit = 20, offset = 0) =>
+    this.get(`/pipeline/?limit=${limit}&offset=${offset}`)
+
+  getPipeline = (id: string) => this.get(`/pipeline/${id}`)
+
+  cancelPipeline = (id: string) => this.post(`/pipeline/${id}/cancel`, {})
+
+  // ── Pipeline Admin: Pending Actions (Master Admin) ───────
+  listPendingActions = (status = 'pending') =>
+    this.get(`/pipeline/admin/pending-actions?status=${status}`)
+
+  approveAction = (actionId: string, note?: string) =>
+    this.post(`/pipeline/admin/pending-actions/${actionId}/approve`, { note })
+
+  rejectAction = (actionId: string, note?: string) =>
+    this.post(`/pipeline/admin/pending-actions/${actionId}/reject`, { note })
+
+  // ── Deployments (GROOT-deployed contracts) ───────────────
+  listDeployments = () => this.get('/deployments/')
+
+  getDeployment = (id: string) => this.get(`/deployments/${id}`)
+
+  transferOwnership = (id: string, newOwner: string) =>
+    this.post(`/deployments/${id}/transfer`, { new_owner: newOwner })
+
+  verifyOwner = (id: string) => this.get(`/deployments/${id}/verify-owner`)
+
+  // ── DApp Factory ─────────────────────────────────────────
+  listDappTemplates = () => this.get('/dapp/templates')
+
+  buildDapp = (data: {
+    template_name: string; contract_name: string;
+    contract_address: string; chain: string; abi_json?: string;
+  }) => this.post('/dapp/build', data)
+
+  listDappBuilds = () => this.get('/dapp/builds')
+
+  downloadDapp = (buildId: string) =>
+    fetch(`${API_URL}/dapp/builds/${buildId}/download`, { headers: this.headers() })
+
+  validateDapp = (buildId: string) => this.post(`/dapp/builds/${buildId}/validate`, {})
+
+  getDappValidation = (buildId: string) => this.get(`/dapp/builds/${buildId}/validation`)
+
+  // ── GROOT Wallet Admin (Master Admin only) ───────────────
+  getGrootWallet = () => this.get('/admin/wallet')
+
+  getGrootBalance = (chain: string) => this.get(`/admin/wallet/balance/${chain}`)
+
+  getGrootTransactions = (limit = 50) => this.get(`/admin/wallet/transactions?limit=${limit}`)
+
+  initiateGrootTransfer = (to: string, amountEth: string, chain = 'base') =>
+    this.post('/admin/wallet/transfer', { to, amount_eth: amountEth, chain })
+
+  // ── CAG: Contract-Augmented Generation ───────────────────
+  // Query: search public SDKs
+  cagQuery = (query: string, chain?: string, maxResults = 3) => {
+    const params = new URLSearchParams({ q: query })
+    if (chain) params.set('chain', chain)
+    params.set('max_results', String(maxResults))
+    return this.get(`/explore/search?${params}`)
+  }
+
+  // Execute: call view/pure functions on-chain (no gas, no approval)
+  cagExecute = (contractAddress: string, chain: string, functionName: string, args: any[] = []) =>
+    this.post('/explore/cag/execute', { contract_address: contractAddress, chain, function_name: functionName, args })
+
+  // Act: request state-changing call (creates PendingAction for master_admin approval)
+  cagAct = (contractAddress: string, chain: string, functionName: string, args: any[] = []) =>
+    this.post('/explore/cag/act', { contract_address: contractAddress, chain, function_name: functionName, args })
+
+  // ── Block Explorer ABI Fetch ─────────────────────────────
+  fetchAbiFromExplorer = (address: string, chain: string) =>
+    this.get(`/explore/fetch-abi?address=${address}&chain=${chain}`)
+
+  // ── Dynamic Chain / Network Management ─────────────────
+  listChains = () => this.get('/explore/chains')
+
+  // Admin chain management (master_admin only)
+  adminListChains = () => this.get('/admin/chains')
+  adminAddChain = (data: {
+    chain_id: number; name: string; short_name: string; rpc_url: string;
+    currency?: string; explorer_url?: string; explorer_api_url?: string;
+    icon_url?: string; is_testnet?: boolean;
+  }) => this.post('/admin/chains', data)
+  adminImportChainlist = (chainId: number) => this.post('/admin/chains/import', { chain_id: chainId })
+  adminUpdateChain = (chainId: number, data: any) => this.put(`/admin/chains/${chainId}`, data)
+  adminDeactivateChain = (chainId: number) => this.delete(`/admin/chains/${chainId}`)
 }
 
 export const api = new RefinetAPI()

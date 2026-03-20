@@ -415,4 +415,13 @@ def build_memory_context(
             proc_lines.append(f"  Trigger: {p['trigger_condition']}")
         parts.append("## Known Strategies\n" + "\n".join(proc_lines))
 
+    # Vector memory (Tier 5) — sqlite-vec hybrid search
+    try:
+        from api.services.vector_memory import build_context as vec_build_context
+        result = vec_build_context(db, agent_id, task_description, top_k=3)
+        if result and result.get("context_block"):
+            parts.append(result["context_block"])
+    except Exception:
+        pass  # Vector memory is complementary
+
     return "\n\n".join(parts) if parts else ""

@@ -20,8 +20,11 @@ Technical reference for how all subsystems connect.
                               │
                     ┌─────────▼──────────┐
                     │  CONTEXT ASSEMBLY   │  api/services/agent_soul.py
-                    │  7-Layer Injection  │  + token_budget.py
+                    │  8-Layer Injection  │  + token_budget.py
                     │  Stack (1536 tokens)│  + context_loader.py
+                    │  SOUL→Agent→Memory  │  + contract_brain.py (CAG)
+                    │  →RAG→CAG→Skills    │
+                    │  →Safety→Runtime    │
                     └─────────┬──────────┘
                               │
                     ┌─────────▼──────────┐
@@ -35,7 +38,9 @@ Technical reference for how all subsystems connect.
                     │  COGNITIVE LOOP     │  api/services/agent_engine.py
                     │  PERCEIVE → PLAN →  │  6 phases, max 5 iterations
                     │  ACT → OBSERVE →    │  Tool calls via MCP gateway
-                    │  REFLECT → STORE    │
+                    │  REFLECT → STORE    │  CAG tools: query/execute/act
+                    │                     │  Pipeline: wizard_pipeline
+                    │  GROOT = Sole Wizard│  deploy via GROOT wallet (SSS)
                     └─────────┬──────────┘
                               │
                     ┌─────────▼──────────┐

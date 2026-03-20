@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { API_URL } from '@/lib/config'
 
-const CHAINS = ['ethereum', 'base', 'arbitrum', 'polygon', 'solana', 'multi-chain']
+const FALLBACK_CHAINS = ['ethereum', 'base', 'arbitrum', 'polygon', 'optimism', 'sepolia']
 const LANGUAGES = ['solidity', 'vyper', 'rust', 'move']
 
 const CHAIN_COLORS: Record<string, string> = {
@@ -73,6 +73,31 @@ export default function RepoPage() {
   const [sdk, setSdk] = useState<any>(null)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [chains, setChains] = useState<string[]>(FALLBACK_CHAINS)
+
+  // Fetch dynamic chains from API
+  useEffect(() => {
+    fetch(`${API_URL}/explore/chains`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setChains(data.map((c: any) => c.short_name || c.chain).filter(Boolean))
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  // Import from block explorer
+  const [showImport, setShowImport] = useState(false)
+  const [importAddress, setImportAddress] = useState('')
+  const [importChain, setImportChain] = useState('ethereum')
+  const [importing, setImporting] = useState(false)
+
+  // Function testing (cag_execute)
+  const [testFn, setTestFn] = useState<string | null>(null)
+  const [testArgs, setTestArgs] = useState('')
+  const [testResult, setTestResult] = useState<any>(null)
+  const [testing, setTesting] = useState(false)
 
   // Upload form state
   const [uploadName, setUploadName] = useState('')
@@ -291,14 +316,65 @@ export default function RepoPage() {
             {repo?.total_contracts || 0} contracts &middot; {repo?.total_public || 0} public
           </div>
         </div>
-        <button onClick={() => setShowUpload(!showUpload)} className="btn-primary !py-2 !px-4 !text-sm">
-          + Upload Contract
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowImport(!showImport)} className="btn-secondary !py-2 !px-4 !text-sm">
+            Import from Explorer
+          </button>
+          <button onClick={() => setShowUpload(!showUpload)} className="btn-primary !py-2 !px-4 !text-sm">
+            + Upload Contract
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
       {message && <div className="card" style={{ padding: 12, background: '#10B98120', color: '#10B981', fontSize: 13 }}>{message}</div>}
       {error && <div className="card" style={{ padding: 12, background: '#EF444420', color: '#EF4444', fontSize: 13 }}>{error}</div>}
+
+      {/* Import from Block Explorer */}
+      {showImport && (
+        <div className="card" style={{ padding: 24 }}>
+          <h2 className="font-bold mb-4" style={{ fontSize: 16 }}>Import from Block Explorer</h2>
+          <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 12 }}>
+            Paste a verified contract address and GROOT will fetch the ABI automatically.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div className="col-span-2">
+              <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Contract Address *</label>
+              <input value={importAddress} onChange={e => setImportAddress(e.target.value)} className="input-base w-full"
+                placeholder="0x..." style={{ fontFamily: "'JetBrains Mono', monospace" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Chain</label>
+              <select value={importChain} onChange={e => setImportChain(e.target.value)} className="input-base w-full">
+                {['ethereum', 'base', 'polygon', 'arbitrum', 'optimism', 'sepolia'].map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="flex gap-3">
+            <button onClick={async () => {
+              if (!importAddress || importAddress.length !== 42) { setError('Enter a valid 42-character address'); return }
+              setImporting(true); setError('')
+              try {
+                const resp = await fetch(`${API_URL}/explore/fetch-abi?address=${importAddress}&chain=${importChain}`, { headers: { Authorization: `Bearer ${localStorage.getItem('refinet_token')}` } })
+                const data = await resp.json()
+                if (!data.success) { setError(data.error || 'ABI not available — contract may not be verified'); setImporting(false); return }
+                // Pre-fill the upload form with fetched data
+                setUploadABI(JSON.stringify(data.abi, null, 2))
+                setUploadAddress(importAddress)
+                setUploadChain(importChain)
+                setUploadName(importAddress.slice(0, 10) + '...')
+                setShowImport(false)
+                setShowUpload(true)
+                setMessage(`Fetched ABI: ${data.function_count} functions, ${data.event_count} events. Review and submit.`)
+              } catch (e: any) { setError(e.message) }
+              setImporting(false)
+            }} disabled={importing} className="btn-primary !py-2 !px-6 !text-sm">
+              {importing ? 'Fetching...' : 'Fetch ABI'}
+            </button>
+            <button onClick={() => setShowImport(false)} className="btn-secondary !py-2 !px-4 !text-sm">Cancel</button>
+          </div>
+        </div>
+      )}
 
       {/* Upload Form */}
       {showUpload && (
@@ -312,7 +388,7 @@ export default function RepoPage() {
             <div>
               <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Chain</label>
               <select value={uploadChain} onChange={e => setUploadChain(e.target.value)} className="input-base w-full">
-                {CHAINS.map(c => <option key={c} value={c}>{c}</option>)}
+                {chains.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div>
@@ -441,7 +517,8 @@ export default function RepoPage() {
                   </h3>
                   <div className="space-y-2">
                     {functions.map(fn => (
-                      <div key={fn.id} className="flex items-center justify-between" style={{
+                      <div key={fn.id}>
+                      <div className="flex items-center justify-between" style={{
                         padding: '8px 12px', borderRadius: 6, background: 'var(--bg-secondary)',
                       }}>
                         <div className="flex items-center gap-2">
@@ -456,14 +533,58 @@ export default function RepoPage() {
                             </span>
                           )}
                         </div>
-                        <label className="flex items-center gap-1 cursor-pointer" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                          <input
-                            type="checkbox"
-                            checked={fn.is_sdk_enabled}
-                            onChange={() => toggleFunction(selectedContract.slug, fn.id, !fn.is_sdk_enabled)}
-                          />
-                          SDK
-                        </label>
+                        <div className="flex items-center gap-2">
+                          {(fn.state_mutability === 'view' || fn.state_mutability === 'pure') && selectedContract?.address && (
+                            <button onClick={() => { setTestFn(testFn === fn.function_name ? null : fn.function_name); setTestArgs(''); setTestResult(null) }}
+                              style={{ fontSize: 10, padding: '2px 6px', borderRadius: 3, background: '#3B82F620', color: '#3B82F6', cursor: 'pointer', border: 'none' }}>
+                              {testFn === fn.function_name ? 'Close' : 'Test'}
+                            </button>
+                          )}
+                          <label className="flex items-center gap-1 cursor-pointer" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                            <input
+                              type="checkbox"
+                              checked={fn.is_sdk_enabled}
+                              onChange={() => toggleFunction(selectedContract.slug, fn.id, !fn.is_sdk_enabled)}
+                            />
+                            SDK
+                          </label>
+                        </div>
+                      </div>
+                      {/* Inline function test panel */}
+                      {testFn === fn.function_name && selectedContract?.address && (
+                        <div style={{ padding: '8px 12px', borderRadius: 6, background: '#3B82F610', border: '1px solid #3B82F630', marginTop: 2 }}>
+                          <div className="flex gap-2 items-center">
+                            <input value={testArgs} onChange={e => setTestArgs(e.target.value)}
+                              placeholder='Args (JSON array): [1000, "0x..."]'
+                              style={{ flex: 1, fontFamily: "'JetBrains Mono', monospace", fontSize: 11, background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)', borderRadius: 4, padding: '4px 8px' }} />
+                            <button disabled={testing} onClick={async () => {
+                              setTesting(true); setTestResult(null)
+                              try {
+                                let args: any[] = []
+                                if (testArgs.trim()) args = JSON.parse(testArgs)
+                                const resp = await fetch(`${API_URL}/explore/cag/execute`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('refinet_token')}` },
+                                  body: JSON.stringify({ contract_address: selectedContract.address, chain: selectedContract.chain, function_name: fn.function_name, args }),
+                                })
+                                setTestResult(await resp.json())
+                              } catch (e: any) { setTestResult({ success: false, error: e.message }) }
+                              setTesting(false)
+                            }} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 4, background: '#3B82F6', color: 'white', border: 'none', cursor: 'pointer', opacity: testing ? 0.5 : 1 }}>
+                              {testing ? 'Calling...' : 'Call'}
+                            </button>
+                          </div>
+                          {testResult && (
+                            <div style={{ marginTop: 6, fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
+                              {testResult.success ? (
+                                <div style={{ color: '#10B981' }}>Result: {JSON.stringify(testResult.result)}</div>
+                              ) : (
+                                <div style={{ color: '#EF4444' }}>Error: {testResult.error}</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       </div>
                     ))}
                   </div>

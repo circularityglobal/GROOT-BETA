@@ -39,14 +39,27 @@ def _require_admin(request: Request, db: Session) -> str:
     """Require admin role for an endpoint."""
     user_id = _get_user_id(request, db)
     from api.database import get_internal_db
-    from api.models.internal import RoleAssignment
+    from api.auth.roles import is_admin
     with get_internal_db() as int_db:
-        role = int_db.query(RoleAssignment).filter(
-            RoleAssignment.user_id == user_id,
-            RoleAssignment.role == "admin",
-        ).first()
-        if not role:
+        if not is_admin(int_db, user_id):
             raise HTTPException(status_code=403, detail="Admin access required")
+    return user_id
+
+
+def _require_master_admin(request: Request, db: Session) -> str:
+    """
+    Require master_admin role. Only master_admin can approve/reject Tier 2 actions
+    that use GROOT's wallet (deploy, transfer, state-changing calls).
+    """
+    user_id = _get_user_id(request, db)
+    from api.database import get_internal_db
+    from api.auth.roles import is_master_admin
+    with get_internal_db() as int_db:
+        if not is_master_admin(int_db, user_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Master admin role required. Only master_admin can approve/reject GROOT actions."
+            )
     return user_id
 
 
@@ -108,6 +121,45 @@ async def start_deploy_pipeline(
     }
 
 
+@router.post("/start")
+async def start_wizard_pipeline(
+    body: dict,
+    request: Request,
+    db: Session = Depends(public_db_dependency),
+):
+    """
+    Start the full Wizard pipeline: source code → live DApp.
+
+    7 stages: compile → test → parse → RBAC → deploy → re-parse → frontend → appstore
+    Frontend generation runs in PARALLEL with RBAC/deploy because it only depends on parse.
+
+    Body: {
+        source_code: str,                  # Solidity source (required unless registry_project_id)
+        registry_project_id?: str,         # Use existing ABI from registry
+        chain: str,                        # Target chain (default: sepolia)
+        constructor_args?: list,           # Constructor arguments
+        compiler_version?: str,            # Solidity version (default: 0.8.20)
+        new_owner?: str,                   # Transfer ownership after deploy
+        brand?: {primary, background},     # DApp branding colors
+        is_public?: bool,                  # Make SDK public after deployment
+        contract_name?: str,               # Override contract name
+    }
+    """
+    user_id = _get_user_id(request, db)
+    pipeline = create_pipeline(db, user_id, "wizard", body)
+    db.commit()
+
+    asyncio.create_task(_run_pipeline_background(pipeline.id))
+
+    return {
+        "pipeline_id": pipeline.id,
+        "pipeline_type": "wizard",
+        "status": "pending",
+        "message": "Full Wizard pipeline started — compile → parse → deploy → frontend → appstore. Poll GET /pipeline/{id} for status.",
+        "parallel_note": "Frontend generation runs in parallel with deployment approval.",
+    }
+
+
 @router.get("/")
 def get_pipelines(
     request: Request,
@@ -158,8 +210,8 @@ def get_pending_actions(
     limit: int = 50,
     db: Session = Depends(public_db_dependency),
 ):
-    """List pending actions for admin review."""
-    _require_admin(request, db)
+    """List pending actions for admin review. Requires master_admin."""
+    _require_master_admin(request, db)
     return list_pending_actions(db, status=status, limit=limit)
 
 
@@ -170,8 +222,11 @@ async def approve_pending_action(
     body: dict = None,
     db: Session = Depends(public_db_dependency),
 ):
-    """Approve a pending action (may resume a paused pipeline)."""
-    reviewer_id = _require_admin(request, db)
+    """
+    Approve a pending action (may resume a paused pipeline).
+    Requires master_admin — GROOT never acts without master admin authorization.
+    """
+    reviewer_id = _require_master_admin(request, db)
     note = (body or {}).get("note")
     result = await approve_action(db, action_id, reviewer_id, note)
     if "error" in result:
@@ -187,8 +242,11 @@ async def reject_pending_action(
     body: dict = None,
     db: Session = Depends(public_db_dependency),
 ):
-    """Reject a pending action (will fail the linked pipeline)."""
-    reviewer_id = _require_admin(request, db)
+    """
+    Reject a pending action (will fail the linked pipeline).
+    Requires master_admin.
+    """
+    reviewer_id = _require_master_admin(request, db)
     note = (body or {}).get("note")
     result = await reject_action(db, action_id, reviewer_id, note)
     if "error" in result:

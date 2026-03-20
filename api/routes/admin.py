@@ -64,6 +64,25 @@ def _require_admin(request: Request, internal_db: Session) -> tuple[str, str]:
     settings = get_settings()
 
     if admin_secret and admin_secret == settings.admin_api_secret:
+        # Audit log the admin secret usage for traceability
+        try:
+            internal_db.add(AdminAuditLog(
+                id=str(uuid.uuid4()),
+                admin_username="system",
+                action="ADMIN_SECRET_ACCESS",
+                target_type="system",
+                target_id="admin_secret_bypass",
+                details=json.dumps({
+                    "method": request.method,
+                    "path": str(request.url.path),
+                    "ip": request.client.host if request.client else "unknown",
+                }),
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("User-Agent"),
+            ))
+            internal_db.flush()
+        except Exception:
+            pass
         return "system", "system"
 
     if not auth_header.startswith("Bearer "):
@@ -77,7 +96,35 @@ def _require_admin(request: Request, internal_db: Session) -> tuple[str, str]:
     user_id = payload["sub"]
     if not is_admin(internal_db, user_id):
         raise HTTPException(status_code=403, detail="Admin role required")
+    return user_id, user_id
 
+
+def _require_master_admin(request: Request, internal_db: Session) -> tuple[str, str]:
+    """
+    Returns (user_id, admin_username). Raises 403 if not master_admin.
+    Master admin has exclusive control over GROOT's wallet, activity, and rights.
+    The admin secret header does NOT bypass this — only an authenticated master_admin can pass.
+    """
+    from api.auth.roles import is_master_admin
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Master admin requires JWT authentication. API secret bypass is not permitted for GROOT wallet operations."
+        )
+
+    try:
+        payload = decode_access_token(auth_header[7:])
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = payload["sub"]
+    if not is_master_admin(internal_db, user_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Master admin role required. Only master_admin can manage GROOT's wallet, activity, and rights."
+        )
     return user_id, user_id
 
 
@@ -1355,3 +1402,285 @@ def platform_stats(
             WebhookSubscription.is_active == True  # noqa
         ).count(),
     )
+
+
+# ── GROOT Wallet Admin Endpoints ─────────────────────────────────
+
+@router.get("/wallet")
+def groot_wallet_info(
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Return GROOT wallet address, creation date, share config. Master admin only."""
+    _require_master_admin(request, int_db)
+    from api.services.wallet_service import get_groot_wallet_info
+    info = get_groot_wallet_info(int_db)
+    if not info:
+        raise HTTPException(status_code=404, detail="GROOT wallet not initialized. Run scripts/init_groot_wallet.py")
+    return info
+
+
+@router.get("/wallet/balance/{chain}")
+def groot_wallet_balance(
+    chain: str,
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Query GROOT wallet ETH balance on a specific chain. Master admin only."""
+    _require_master_admin(request, int_db)
+    from api.services.wallet_service import get_groot_wallet_balance
+    try:
+        return get_groot_wallet_balance(int_db, chain)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/wallet/transactions")
+def groot_wallet_transactions(
+    request: Request,
+    limit: int = 50,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Recent deployment records and pending actions involving GROOT wallet. Master admin only."""
+    _require_master_admin(request, int_db)
+    from api.models.pipeline import DeploymentRecord, PendingAction
+    from api.services.wallet_service import get_groot_wallet_address
+
+    address = get_groot_wallet_address(int_db)
+    if not address:
+        raise HTTPException(status_code=404, detail="GROOT wallet not initialized")
+
+    deployments = (
+        pub_db.query(DeploymentRecord)
+        .filter(DeploymentRecord.deployer_address == address)
+        .order_by(DeploymentRecord.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    actions = (
+        pub_db.query(PendingAction)
+        .order_by(PendingAction.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "groot_address": address,
+        "deployments": [
+            {
+                "id": d.id,
+                "contract_address": d.contract_address,
+                "chain": d.chain,
+                "tx_hash": d.tx_hash,
+                "ownership_status": d.ownership_status,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+            }
+            for d in deployments
+        ],
+        "pending_actions": [
+            {
+                "id": a.id,
+                "action_type": a.action_type,
+                "status": a.status,
+                "target_chain": a.target_chain,
+                "target_address": a.target_address,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            }
+            for a in actions
+        ],
+    }
+
+
+@router.post("/wallet/transfer")
+async def groot_wallet_transfer(
+    body: dict,
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """
+    Initiate a fund transfer from GROOT's wallet. Master admin only.
+    Creates a PendingAction that must be approved by a SECOND master_admin.
+    """
+    user_id, _ = _require_master_admin(request, int_db)
+    from api.models.pipeline import PendingAction
+    from api.services.wallet_service import get_groot_wallet_address
+
+    address = get_groot_wallet_address(int_db)
+    if not address:
+        raise HTTPException(status_code=404, detail="GROOT wallet not initialized")
+
+    to_address = body.get("to")
+    amount_eth = body.get("amount_eth")
+    chain = body.get("chain", "base")
+
+    if not to_address or not amount_eth:
+        raise HTTPException(status_code=400, detail="Required: to, amount_eth")
+
+    action = PendingAction(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        action_type="groot_transfer_funds",
+        target_chain=chain,
+        target_address=to_address,
+        payload_json=json.dumps({
+            "from": address,
+            "to": to_address,
+            "amount_eth": str(amount_eth),
+            "chain": chain,
+            "initiated_by": user_id,
+        }),
+        status="pending",
+    )
+    pub_db.add(action)
+
+    # Audit in internal.db
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=user_id,
+        action="GROOT_TRANSFER_INITIATED",
+        target_type="wallet",
+        target_id=address,
+        details=json.dumps({
+            "to": to_address,
+            "amount_eth": str(amount_eth),
+            "chain": chain,
+            "pending_action_id": action.id,
+        }),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    ))
+    int_db.flush()
+    pub_db.flush()
+
+    return {
+        "pending_action_id": action.id,
+        "status": "pending",
+        "message": "Transfer requires a SECOND master_admin approval via PUT /pipeline/admin/pending-actions/{id}/approve",
+    }
+
+
+# ── Network / Chain Management (Master Admin) ────────────────────
+
+@router.get("/chains")
+def list_chains(
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+    pub_db: Session = Depends(public_db_dependency),
+):
+    """List all supported chains. Master admin sees all; others see active only."""
+    try:
+        _require_master_admin(request, int_db)
+        show_all = True
+    except Exception:
+        show_all = False
+
+    from api.models.chain import SupportedChain
+    q = pub_db.query(SupportedChain)
+    if not show_all:
+        q = q.filter(SupportedChain.is_active == True)  # noqa
+    chains = q.order_by(SupportedChain.chain_id).all()
+    return [
+        {
+            "chain_id": c.chain_id, "name": c.name, "short_name": c.short_name,
+            "currency": c.currency, "rpc_url": c.rpc_url,
+            "explorer_url": c.explorer_url, "explorer_api_url": c.explorer_api_url,
+            "icon_url": c.icon_url, "is_testnet": c.is_testnet, "is_active": c.is_active,
+            "added_by": c.added_by,
+        }
+        for c in chains
+    ]
+
+
+@router.post("/chains")
+def add_chain_endpoint(
+    body: dict,
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+    pub_db: Session = Depends(public_db_dependency),
+):
+    """Add a new EVM chain. Master admin only."""
+    user_id, _ = _require_master_admin(request, int_db)
+    from api.services.chain_registry import add_chain
+    result = add_chain(
+        pub_db,
+        chain_id=body.get("chain_id"),
+        name=body.get("name", ""),
+        short_name=body.get("short_name", ""),
+        rpc_url=body.get("rpc_url", ""),
+        currency=body.get("currency", "ETH"),
+        explorer_url=body.get("explorer_url"),
+        explorer_api_url=body.get("explorer_api_url"),
+        icon_url=body.get("icon_url"),
+        is_testnet=body.get("is_testnet", False),
+        added_by=user_id,
+    )
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    pub_db.flush()
+    return result
+
+
+@router.post("/chains/import")
+def import_chain_from_chainlist(
+    body: dict,
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+    pub_db: Session = Depends(public_db_dependency),
+):
+    """Import chain config from chainlist.org by chain_id. Master admin only."""
+    user_id, _ = _require_master_admin(request, int_db)
+    chain_id = body.get("chain_id")
+    if not chain_id or not isinstance(chain_id, int):
+        raise HTTPException(status_code=400, detail="chain_id (integer) required")
+    from api.services.chain_registry import import_from_chainlist
+    result = import_from_chainlist(pub_db, chain_id, added_by=user_id)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    pub_db.flush()
+    return result
+
+
+@router.put("/chains/{chain_id}")
+def update_chain(
+    chain_id: int,
+    body: dict,
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+    pub_db: Session = Depends(public_db_dependency),
+):
+    """Update chain config. Master admin only."""
+    _require_master_admin(request, int_db)
+    from api.models.chain import SupportedChain
+    chain = pub_db.query(SupportedChain).filter(SupportedChain.chain_id == chain_id).first()
+    if not chain:
+        raise HTTPException(status_code=404, detail=f"Chain {chain_id} not found")
+    for field in ("name", "short_name", "currency", "rpc_url", "explorer_url", "explorer_api_url", "icon_url", "is_testnet", "is_active"):
+        if field in body:
+            setattr(chain, field, body[field])
+    pub_db.flush()
+    from api.services.chain_registry import ChainRegistry
+    ChainRegistry.get().invalidate_cache()
+    return {"chain_id": chain_id, "status": "updated"}
+
+
+@router.delete("/chains/{chain_id}")
+def deactivate_chain(
+    chain_id: int,
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+    pub_db: Session = Depends(public_db_dependency),
+):
+    """Deactivate a chain (soft delete). Master admin only."""
+    _require_master_admin(request, int_db)
+    from api.models.chain import SupportedChain
+    chain = pub_db.query(SupportedChain).filter(SupportedChain.chain_id == chain_id).first()
+    if not chain:
+        raise HTTPException(status_code=404, detail=f"Chain {chain_id} not found")
+    chain.is_active = False
+    pub_db.flush()
+    from api.services.chain_registry import ChainRegistry
+    ChainRegistry.get().invalidate_cache()
+    return {"chain_id": chain_id, "status": "deactivated"}

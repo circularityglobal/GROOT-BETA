@@ -26,34 +26,66 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger("refinet.wizard_workers")
 
 
-# ── Chain Configuration ───────────────────────────────────────────
+# ── Chain Configuration (Dynamic — reads from chain_registry) ────
+# These dicts are kept as FALLBACKS for when the DB is not available.
+# All runtime lookups go through ChainRegistry.get() first.
 
-CHAIN_RPC = {
-    "ethereum": "https://eth.llamarpc.com",
-    "sepolia": "https://rpc.sepolia.org",
-    "base": "https://mainnet.base.org",
-    "polygon": "https://polygon-rpc.com",
-    "arbitrum": "https://arb1.arbitrum.io/rpc",
-    "optimism": "https://mainnet.optimism.io",
+_FALLBACK_RPC = {
+    "ethereum": "https://eth.llamarpc.com", "sepolia": "https://rpc.sepolia.org",
+    "base": "https://mainnet.base.org", "polygon": "https://polygon-rpc.com",
+    "arbitrum": "https://arb1.arbitrum.io/rpc", "optimism": "https://mainnet.optimism.io",
+}
+_FALLBACK_IDS = {
+    "ethereum": 1, "sepolia": 11155111, "base": 8453,
+    "polygon": 137, "arbitrum": 42161, "optimism": 10,
+}
+_FALLBACK_EXPLORERS = {
+    "ethereum": "https://api.etherscan.io/api", "sepolia": "https://api-sepolia.etherscan.io/api",
+    "base": "https://api.basescan.org/api", "polygon": "https://api.polygonscan.com/api",
+    "arbitrum": "https://api.arbiscan.io/api", "optimism": "https://api-optimistic.etherscan.io/api",
 }
 
-CHAIN_IDS = {
-    "ethereum": 1,
-    "sepolia": 11155111,
-    "base": 8453,
-    "polygon": 137,
-    "arbitrum": 42161,
-    "optimism": 10,
-}
 
-EXPLORER_APIS = {
-    "ethereum": "https://api.etherscan.io/api",
-    "sepolia": "https://api-sepolia.etherscan.io/api",
-    "base": "https://api.basescan.org/api",
-    "polygon": "https://api.polygonscan.com/api",
-    "arbitrum": "https://api.arbiscan.io/api",
-    "optimism": "https://api-optimistic.etherscan.io/api",
-}
+def _get_rpc(chain: str) -> str:
+    """Get RPC URL from chain registry (DB) with fallback to hardcoded."""
+    try:
+        from api.services.chain_registry import ChainRegistry
+        url = ChainRegistry.get().get_rpc(chain)
+        if url:
+            return url
+    except Exception:
+        pass
+    return _FALLBACK_RPC.get(chain, "")
+
+
+def _get_chain_id(chain: str) -> int:
+    """Get chain ID from chain registry (DB) with fallback."""
+    try:
+        from api.services.chain_registry import ChainRegistry
+        cid = ChainRegistry.get().get_chain_id(chain)
+        if cid:
+            return cid
+    except Exception:
+        pass
+    return _FALLBACK_IDS.get(chain, 0)
+
+
+def _get_explorer_api(chain: str) -> str:
+    """Get explorer API URL from chain registry (DB) with fallback."""
+    try:
+        from api.services.chain_registry import ChainRegistry
+        url = ChainRegistry.get().get_explorer_api(chain)
+        if url:
+            return url
+    except Exception:
+        pass
+    return _FALLBACK_EXPLORERS.get(chain, "")
+
+
+# Legacy aliases for backward compatibility (used by other modules that import these)
+CHAIN_RPC = _FALLBACK_RPC
+CHAIN_IDS = _FALLBACK_IDS
+EXPLORER_APIS = _FALLBACK_EXPLORERS
 
 
 # ── Worker 1: Compile ─────────────────────────────────────────────
@@ -104,16 +136,122 @@ def compile_worker(input_json: dict) -> dict:
     if not source_code:
         return {"error": "No source_code or registry_project_id provided", "success": False}
 
-    # Write source to temp file
     import tempfile
+    import shutil
+
+    compiler_version = input_json.get("compiler_version", "0.8.20")
+    contract_name = input_json.get("contract_name", "Contract")
+
+    # Extract contract name from source if not provided
+    if contract_name == "Contract":
+        import re
+        match = re.search(r'contract\s+(\w+)', source_code)
+        if match:
+            contract_name = match.group(1)
+
+    # Try Path B1: Hardhat compilation (preferred)
+    hardhat_base = os.environ.get("HARDHAT_BASE_DIR", "/opt/refinet/hardhat-base")
+    if os.path.isdir(hardhat_base):
+        tmp_dir = tempfile.mkdtemp(prefix="groot_hardhat_")
+        try:
+            # Copy hardhat base scaffold (has node_modules pre-installed)
+            shutil.copytree(hardhat_base, tmp_dir, dirs_exist_ok=True)
+
+            # Write source code
+            contracts_dir = os.path.join(tmp_dir, "contracts")
+            os.makedirs(contracts_dir, exist_ok=True)
+            source_path = os.path.join(contracts_dir, f"{contract_name}.sol")
+            with open(source_path, "w") as f:
+                f.write(source_code)
+
+            # Generate hardhat.config.js with specified compiler version
+            config_content = f"""
+require("@nomicfoundation/hardhat-toolbox");
+module.exports = {{
+  solidity: {{
+    version: "{compiler_version}",
+    settings: {{ optimizer: {{ enabled: true, runs: 200 }} }}
+  }},
+}};
+"""
+            with open(os.path.join(tmp_dir, "hardhat.config.js"), "w") as f:
+                f.write(config_content)
+
+            # Run Hardhat compile
+            result = subprocess.run(
+                ["npx", "hardhat", "compile"],
+                capture_output=True, text=True, timeout=120,
+                cwd=tmp_dir,
+                env={**os.environ, "NODE_PATH": os.path.join(tmp_dir, "node_modules")},
+            )
+
+            if result.returncode != 0:
+                return {
+                    "error": f"Hardhat compilation failed: {result.stderr[:1000]}",
+                    "success": False,
+                }
+
+            # Parse Hardhat artifacts
+            artifact_path = os.path.join(
+                tmp_dir, "artifacts", "contracts", f"{contract_name}.sol", f"{contract_name}.json"
+            )
+            if not os.path.exists(artifact_path):
+                # Try to find any artifact
+                artifact_dir = os.path.join(tmp_dir, "artifacts", "contracts")
+                found = False
+                for root, dirs, files in os.walk(artifact_dir):
+                    for fname in files:
+                        if fname.endswith(".json") and not fname.endswith(".dbg.json"):
+                            artifact_path = os.path.join(root, fname)
+                            contract_name = fname.replace(".json", "")
+                            found = True
+                            break
+                    if found:
+                        break
+                if not found:
+                    return {"error": "No artifacts produced by Hardhat", "success": False}
+
+            with open(artifact_path) as f:
+                artifact = json.loads(f.read())
+
+            abi = artifact.get("abi", [])
+            bytecode = artifact.get("bytecode", "0x")
+
+            warnings = []
+            if result.stderr:
+                warnings = [w.strip() for w in result.stderr.split("\n") if w.strip() and "Warning" in w]
+
+            # Try to extract gas estimates from compilation output
+            gas_estimates = {}
+            for entry in abi:
+                if entry.get("type") == "function":
+                    gas_estimates[entry["name"]] = "estimated at deploy time"
+
+            return {
+                "success": True,
+                "abi": abi,
+                "bytecode": bytecode,
+                "compiler_version": compiler_version,
+                "compiler": "hardhat",
+                "warnings": warnings,
+                "contract_name": contract_name,
+                "gas_estimates": gas_estimates,
+                "source_code": source_code,
+            }
+        except subprocess.TimeoutExpired:
+            return {"error": "Hardhat compilation timed out (120s limit)", "success": False}
+        except Exception as e:
+            logger.warning("Hardhat compilation failed, falling back to solc: %s", e)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Path B2: Fallback to solc CLI
     tmp_dir = tempfile.mkdtemp(prefix="groot_compile_")
-    source_path = os.path.join(tmp_dir, "Contract.sol")
+    source_path = os.path.join(tmp_dir, f"{contract_name}.sol")
     try:
         with open(source_path, "w") as f:
             f.write(source_code)
 
-        # Try solc CLI
-        compiler_version = input_json.get("compiler_version", "")
         try:
             result = subprocess.run(
                 ["solc", "--combined-json", "abi,bin", "--optimize", source_path],
@@ -125,10 +263,10 @@ def compile_worker(input_json: dict) -> dict:
                 if not contracts:
                     return {"error": "Compilation produced no contracts", "success": False}
 
-                # Take the first contract
                 contract_key = list(contracts.keys())[0]
                 contract = contracts[contract_key]
-                abi = json.loads(contract.get("abi", "[]"))
+                raw_abi = contract.get("abi", "[]")
+                abi = raw_abi if isinstance(raw_abi, list) else json.loads(raw_abi)
                 bytecode = "0x" + contract.get("bin", "")
 
                 warnings = []
@@ -140,8 +278,10 @@ def compile_worker(input_json: dict) -> dict:
                     "abi": abi,
                     "bytecode": bytecode,
                     "compiler_version": compiler_version or "solc",
+                    "compiler": "solc",
                     "warnings": warnings,
                     "contract_name": contract_key.split(":")[-1],
+                    "source_code": source_code,
                 }
             else:
                 return {
@@ -158,13 +298,14 @@ def compile_worker(input_json: dict) -> dict:
                     "abi": abi if isinstance(abi, list) else json.loads(abi),
                     "bytecode": bytecode if bytecode.startswith("0x") else "0x" + bytecode,
                     "compiler_version": "provided",
-                    "warnings": ["solc not available — using provided ABI + bytecode"],
+                    "compiler": "provided",
+                    "warnings": ["No compiler available — using provided ABI + bytecode"],
+                    "source_code": source_code,
                 }
-            return {"error": "solc not installed and no pre-compiled ABI/bytecode provided", "success": False}
+            return {"error": "No compiler available (hardhat/solc) and no pre-compiled ABI/bytecode provided", "success": False}
         except subprocess.TimeoutExpired:
             return {"error": "Compilation timed out (60s limit)", "success": False}
     finally:
-        import shutil
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
@@ -273,6 +414,111 @@ def test_worker(input_json: dict) -> dict:
         "details": "No collisions" if not collisions else f"Collisions: {collisions}",
     })
 
+    # Test 5: Hardhat tests (if test_source provided or auto-generate deployment test)
+    hardhat_base = os.environ.get("HARDHAT_BASE_DIR", "/opt/refinet/hardhat-base")
+    source_code = input_json.get("source_code")
+    if os.path.isdir(hardhat_base) and (test_source or source_code):
+        import tempfile
+        import shutil
+        tmp_dir = tempfile.mkdtemp(prefix="groot_hardhat_test_")
+        try:
+            shutil.copytree(hardhat_base, tmp_dir, dirs_exist_ok=True)
+            compiler_version = input_json.get("compiler_version", "0.8.20")
+
+            # Write hardhat config
+            config_content = f"""
+require("@nomicfoundation/hardhat-toolbox");
+module.exports = {{
+  solidity: {{
+    version: "{compiler_version}",
+    settings: {{ optimizer: {{ enabled: true, runs: 200 }} }}
+  }},
+}};
+"""
+            with open(os.path.join(tmp_dir, "hardhat.config.js"), "w") as f:
+                f.write(config_content)
+
+            # Write contract source
+            if source_code:
+                contracts_dir = os.path.join(tmp_dir, "contracts")
+                os.makedirs(contracts_dir, exist_ok=True)
+                with open(os.path.join(contracts_dir, f"{contract_name}.sol"), "w") as f:
+                    f.write(source_code)
+
+            # Write test file
+            test_dir = os.path.join(tmp_dir, "test")
+            os.makedirs(test_dir, exist_ok=True)
+
+            if test_source:
+                test_content = test_source
+            else:
+                # Auto-generate basic deployment test
+                test_content = f"""
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{contract_name}", function () {{
+  it("Should deploy successfully", async function () {{
+    const Factory = await ethers.getContractFactory("{contract_name}");
+    const contract = await Factory.deploy();
+    await contract.waitForDeployment();
+    const addr = await contract.getAddress();
+    expect(addr).to.be.properAddress;
+  }});
+}});
+"""
+            with open(os.path.join(test_dir, f"{contract_name}.test.js"), "w") as f:
+                f.write(test_content)
+
+            # Run Hardhat tests
+            result = subprocess.run(
+                ["npx", "hardhat", "test", "--no-compile" if not source_code else ""],
+                capture_output=True, text=True, timeout=120,
+                cwd=tmp_dir,
+                env={**os.environ, "NODE_PATH": os.path.join(tmp_dir, "node_modules")},
+            )
+
+            hardhat_passed = result.returncode == 0
+            # Parse test output for pass/fail counts
+            hh_passing = 0
+            hh_failing = 0
+            for line in result.stdout.split("\n"):
+                line = line.strip()
+                if "passing" in line:
+                    try:
+                        hh_passing = int(line.split()[0])
+                    except (ValueError, IndexError):
+                        pass
+                if "failing" in line:
+                    try:
+                        hh_failing = int(line.split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+            test_results.append({
+                "name": "hardhat_tests",
+                "passed": hardhat_passed,
+                "details": (
+                    f"Hardhat: {hh_passing} passing, {hh_failing} failing"
+                    if hardhat_passed else
+                    f"Hardhat tests failed: {result.stderr[:300] or result.stdout[-300:]}"
+                ),
+            })
+        except subprocess.TimeoutExpired:
+            test_results.append({
+                "name": "hardhat_tests",
+                "passed": False,
+                "details": "Hardhat test execution timed out (120s)",
+            })
+        except Exception as e:
+            test_results.append({
+                "name": "hardhat_tests",
+                "passed": False,
+                "details": f"Hardhat test setup failed: {e}",
+            })
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
     passed = sum(1 for t in test_results if t["passed"])
     failed = sum(1 for t in test_results if not t["passed"])
 
@@ -283,6 +529,387 @@ def test_worker(input_json: dict) -> dict:
         "test_results": test_results,
         "logs": f"Ran {len(test_results)} checks: {passed} passed, {failed} failed",
     }
+
+
+# ── Worker 7: Parse ──────────────────────────────────────────────
+
+def parse_worker(input_json: dict) -> dict:
+    """
+    Parse compiled ABI into an SDK definition with access control classification.
+    Wraps the existing abi_parser + sdk_generator pipeline.
+
+    Input:
+        abi: list — compiled ABI
+        contract_name: str
+        source_code: str — optional (for deeper analysis)
+        chain: str — target blockchain
+        contract_address: str — optional (if deployed)
+        user_id: str
+        user_namespace: str — optional (@username)
+        is_public: bool — optional (default: false)
+
+    Output:
+        success: bool
+        sdk_json: dict — generated SDK definition
+        parsed_functions: list — classified function list
+        parsed_events: list — event list
+        security_summary: dict
+        sdk_id: str — stored SDK definition ID
+    """
+    abi = input_json.get("abi", [])
+    contract_name = input_json.get("contract_name", "Contract")
+    source_code = input_json.get("source_code")
+    chain = input_json.get("chain", "unknown")
+    contract_address = input_json.get("contract_address")
+    user_id = input_json.get("user_id", "system")
+    user_namespace = input_json.get("user_namespace", f"@{user_id}")
+    is_public = input_json.get("is_public", False)
+
+    if not abi:
+        return {"success": False, "error": "No ABI provided"}
+
+    try:
+        from api.services.abi_parser import parse_abi
+        from api.services.sdk_generator import generate_sdk
+        from dataclasses import asdict
+
+        # Parse ABI (accepts JSON string)
+        abi_json_str = json.dumps(abi) if isinstance(abi, list) else abi
+        parsed = parse_abi(abi_json_str, source_code=source_code)
+
+        # Generate SDK
+        sdk = generate_sdk(
+            contract_name=contract_name,
+            chain=chain,
+            contract_address=contract_address,
+            owner_namespace=user_namespace,
+            language="solidity",
+            version="1.0.0",
+            description=input_json.get("description"),
+            tags=input_json.get("tags"),
+            parsed=parsed,
+        )
+
+        # Store SDK in database
+        sdk_id = None
+        try:
+            from api.database import get_public_db
+            from api.models.brain import SDKDefinition, ContractRepo, UserRepository
+            from api.services.crypto_utils import sha256_hex
+
+            sdk_json_str = json.dumps(sdk)
+            with get_public_db() as db:
+                # Resolve or create the contract_repo record (FK target for sdk_definitions)
+                contract_id = input_json.get("contract_id")
+                if contract_id:
+                    # Verify it exists
+                    existing = db.query(ContractRepo).filter(ContractRepo.id == contract_id).first()
+                    if not existing:
+                        contract_id = None  # Will create below
+
+                if not contract_id:
+                    # Ensure user repository exists
+                    user_repo = db.query(UserRepository).filter(
+                        UserRepository.user_id == user_id
+                    ).first()
+                    if not user_repo:
+                        user_repo = UserRepository(
+                            id=str(uuid.uuid4()),
+                            user_id=user_id,
+                            namespace=f"@{user_id}",
+                        )
+                        db.add(user_repo)
+                        db.flush()
+
+                    # Create contract_repo record
+                    import re
+                    slug = re.sub(r'[^a-z0-9-]', '-', contract_name.lower()).strip('-')
+                    contract_repo = ContractRepo(
+                        id=str(uuid.uuid4()),
+                        user_id=user_id,
+                        repo_id=user_repo.id,
+                        name=contract_name,
+                        slug=f"{slug}-{str(uuid.uuid4())[:8]}",
+                        description=input_json.get("description"),
+                        chain=chain,
+                        address=contract_address,
+                        is_public=is_public,
+                    )
+                    db.add(contract_repo)
+                    db.flush()
+                    contract_id = contract_repo.id
+
+                sdk_record = SDKDefinition(
+                    id=str(uuid.uuid4()),
+                    contract_id=contract_id,
+                    user_id=user_id,
+                    sdk_json=sdk_json_str,
+                    sdk_hash=sha256_hex(sdk_json_str),
+                    is_public=is_public,
+                    chain=chain,
+                    contract_address=contract_address,
+                )
+                db.add(sdk_record)
+                db.flush()
+                sdk_id = sdk_record.id
+
+                # If public, ingest into knowledge base for GROOT's brain
+                if is_public and contract_address:
+                    try:
+                        from api.services.contract_brain import ingest_sdk_to_knowledge
+                        contract_repo = db.query(ContractRepo).filter(
+                            ContractRepo.id == contract_id
+                        ).first()
+                        if contract_repo:
+                            ingest_sdk_to_knowledge(db, contract_repo, sdk_record)
+                    except Exception as e:
+                        logger.warning("SDK knowledge ingestion failed: %s", e)
+
+                db.commit()
+        except Exception as e:
+            logger.warning("SDK storage failed (non-fatal): %s", e)
+
+        # Build output
+        fn_list = [
+            {
+                "name": fn.name,
+                "signature": fn.signature,
+                "access_level": fn.access_level,
+                "state_mutability": fn.state_mutability,
+                "is_dangerous": fn.is_dangerous,
+            }
+            for fn in parsed.functions
+        ]
+        ev_list = [
+            {
+                "name": ev.name,
+                "signature": ev.signature,
+                "topic_hash": ev.topic_hash,
+            }
+            for ev in parsed.events
+        ]
+        security = asdict(parsed.security) if parsed.security else {}
+
+        return {
+            "success": True,
+            "sdk_json": sdk,
+            "parsed_functions": fn_list,
+            "parsed_events": ev_list,
+            "security_summary": security,
+            "sdk_id": sdk_id,
+            "contract_name": contract_name,
+        }
+
+    except Exception as e:
+        logger.exception("Parse worker failed for contract %s", contract_name)
+        return {"success": False, "error": str(e)}
+
+
+# ── Worker 8: Frontend Generation ────────────────────────────────
+
+def frontend_worker(input_json: dict) -> dict:
+    """
+    Generate a 3-page React DApp from an SDK definition.
+    Uses 2 LLM calls for component generation (Splash + Public/Admin pages).
+
+    Input:
+        sdk_json: dict — SDK definition from parse_worker
+        contract_name: str
+        chain: str
+        contract_address: str
+        brand: dict — optional {primary, background, accent}
+        user_id: str
+
+    Output:
+        success: bool
+        dapp_build_id: str
+        pages: list — ["SplashPage", "PublicPage", "AdminPage"]
+        zip_path: str
+        functions_covered: dict — {public: int, admin: int, view: int}
+    """
+    sdk_json = input_json.get("sdk_json", {})
+    contract_name = input_json.get("contract_name", "DApp")
+    chain = input_json.get("chain", "base")
+    contract_address = input_json.get("contract_address", "0x0000000000000000000000000000000000000000")
+    brand = input_json.get("brand", {"primary": "#FF6B00", "background": "#1A1A2E"})
+    user_id = input_json.get("user_id", "system")
+
+    if not sdk_json:
+        return {"success": False, "error": "No sdk_json provided"}
+
+    try:
+        # Extract function lists from SDK
+        functions = sdk_json.get("functions", {})
+        public_fns = functions.get("public", [])
+        admin_fns = functions.get("owner_admin", [])
+        view_fns = [f for f in public_fns if f.get("state_mutability") in ("view", "pure")]
+        write_fns = [f for f in public_fns if f.get("state_mutability") not in ("view", "pure")]
+
+        # Determine template based on function patterns
+        template = "simple-dashboard"
+        fn_names = [f.get("name", "").lower() for f in public_fns]
+        if any(n in fn_names for n in ("stake", "unstake", "claimreward")):
+            template = "staking-ui"
+        elif any(n in fn_names for n in ("transfer", "approve", "balanceof")):
+            template = "token-manager"
+        elif any(n in fn_names for n in ("propose", "vote", "execute")):
+            template = "governance-voting"
+
+        # Generate DApp using existing factory
+        from api.services.dapp_factory import assemble_dapp, generate_dapp_zip
+
+        try:
+            from api.database import get_public_db
+            with get_public_db() as db:
+                abi = sdk_json.get("abi", [])
+                if not abi:
+                    # Reconstruct ABI from SDK function definitions
+                    abi = _reconstruct_abi_from_sdk(sdk_json)
+
+                build = assemble_dapp(
+                    db=db,
+                    user_id=user_id,
+                    template_name=template,
+                    contract_name=contract_name,
+                    contract_address=contract_address,
+                    chain=chain,
+                    abi_json=json.dumps(abi),
+                )
+
+                zip_bytes = None
+                if build:
+                    try:
+                        zip_bytes = generate_dapp_zip(
+                            template_name=template,
+                            contract_name=contract_name,
+                            contract_address=contract_address,
+                            chain=chain,
+                            abi_json=json.dumps(abi),
+                        )
+                    except Exception as e:
+                        logger.warning("DApp zip generation failed (non-fatal): %s", e)
+
+                db.commit()
+
+                return {
+                    "success": True,
+                    "dapp_build_id": build.id if build else None,
+                    "pages": ["SplashPage", "PublicPage", "AdminPage"],
+                    "template": template,
+                    "zip_size_bytes": len(zip_bytes) if zip_bytes else 0,
+                    "functions_covered": {
+                        "public": len(write_fns),
+                        "admin": len(admin_fns),
+                        "view": len(view_fns),
+                    },
+                }
+        except Exception as e:
+            logger.exception("DApp assembly failed for %s", contract_name)
+            return {"success": False, "error": f"DApp assembly failed: {e}"}
+
+    except Exception as e:
+        logger.exception("Frontend worker failed for %s", contract_name)
+        return {"success": False, "error": str(e)}
+
+
+def _reconstruct_abi_from_sdk(sdk_json: dict) -> list:
+    """Reconstruct a minimal ABI array from SDK function definitions."""
+    abi = []
+    for group_key in ("public", "owner_admin"):
+        for fn in sdk_json.get("functions", {}).get(group_key, []):
+            entry = {
+                "type": "function",
+                "name": fn.get("name", ""),
+                "inputs": fn.get("inputs", []),
+                "outputs": fn.get("outputs", []),
+                "stateMutability": fn.get("state_mutability", "nonpayable"),
+            }
+            abi.append(entry)
+    for ev in sdk_json.get("events", []):
+        entry = {
+            "type": "event",
+            "name": ev.get("name", ""),
+            "inputs": ev.get("inputs", []),
+        }
+        abi.append(entry)
+    return abi
+
+
+# ── Worker 9: App Store Submission ───────────────────────────────
+
+def appstore_worker(input_json: dict) -> dict:
+    """
+    Submit a built DApp to the App Store review pipeline.
+
+    Input:
+        dapp_build_id: str
+        sdk_json: dict
+        contract_name: str
+        contract_address: str
+        chain: str
+        user_id: str
+
+    Output:
+        success: bool
+        submission_id: str
+        status: str
+    """
+    dapp_build_id = input_json.get("dapp_build_id")
+    contract_name = input_json.get("contract_name", "DApp")
+    contract_address = input_json.get("contract_address")
+    chain = input_json.get("chain", "base")
+    user_id = input_json.get("user_id", "system")
+
+    if not dapp_build_id:
+        return {"success": False, "error": "No dapp_build_id provided"}
+
+    try:
+        from api.database import get_public_db
+
+        with get_public_db() as db:
+            # Publish app listing via the app store service
+            try:
+                from api.services.app_store import publish_app
+                result = publish_app(
+                    db=db,
+                    owner_id=user_id,
+                    name=contract_name,
+                    description=f"Auto-generated DApp for {contract_name} on {chain}",
+                    category="dapp",
+                    chain=chain,
+                    version="1.0.0",
+                    price_type="free",
+                    tags=[chain, "auto-generated", "wizard"],
+                    dapp_build_id=dapp_build_id,
+                )
+                db.commit()
+
+                if result.get("error"):
+                    return {
+                        "success": True,
+                        "listing_id": None,
+                        "status": "skipped",
+                        "message": f"App Store submission skipped: {result['error']}",
+                    }
+
+                return {
+                    "success": True,
+                    "listing_id": result.get("id"),
+                    "status": "draft",
+                    "message": "DApp submitted to App Store as draft. Admin review required for publishing.",
+                }
+            except Exception as e:
+                logger.warning("App Store listing creation failed: %s", e)
+                return {
+                    "success": True,
+                    "listing_id": None,
+                    "status": "skipped",
+                    "message": f"App Store submission skipped: {e}",
+                }
+
+    except Exception as e:
+        logger.exception("App Store worker failed for %s", contract_name)
+        return {"success": False, "error": str(e)}
 
 
 # ── Worker 3: RBAC Check ──────────────────────────────────────────
@@ -374,13 +1001,18 @@ def _check_tier_and_create_pending(db: Session, input_json: dict) -> dict:
 
 
 # ── Worker 4: Deploy ──────────────────────────────────────────────
+#
+# GROOT is the ONE Wizard. All deployments go through GROOT's wallet.
+# Users request deployments → master_admin approves → GROOT signs.
+# After deployment, GROOT transfers ownership to the user's personal wallet.
 
 def deploy_worker(input_json: dict) -> dict:
     """
-    Deploy a compiled contract on-chain using the GROOT custodial wallet.
+    Deploy a compiled contract on-chain using GROOT's custodial wallet.
+    GROOT is the sole Wizard — all deployments are signed by GROOT.
 
     Input:
-        user_id: str
+        user_id: str — the user who requested the deployment (for audit trail)
         abi: list
         bytecode: str (0x-prefixed hex)
         constructor_args: list — optional
@@ -393,7 +1025,7 @@ def deploy_worker(input_json: dict) -> dict:
         contract_address: str
         tx_hash: str
         block_number: int
-        deployer_address: str
+        deployer_address: str — always GROOT's address
         gas_used: int
     """
     user_id = input_json.get("user_id")
@@ -402,76 +1034,60 @@ def deploy_worker(input_json: dict) -> dict:
     constructor_args = input_json.get("constructor_args", [])
     chain = input_json.get("chain", "sepolia")
     gas_limit = input_json.get("gas_limit")
-    rpc_url = input_json.get("rpc_url") or CHAIN_RPC.get(chain)
+    rpc_url = input_json.get("rpc_url") or _get_rpc(chain)
 
     if not bytecode or bytecode == "0x":
         return {"success": False, "error": "No bytecode provided"}
     if not rpc_url:
         return {"success": False, "error": f"No RPC URL for chain: {chain}"}
-    if not user_id:
-        return {"success": False, "error": "No user_id provided"}
 
     try:
         from web3 import Web3
         from api.database import get_internal_db
-        from api.services.wallet_service import get_custodial_wallet_address
-        from api.services.wallet_crypto import derive_wallet_key, decrypt_share
-        from api.services.shamir import reconstruct_secret
-        from api.models.internal import CustodialWallet, WalletShare
-        import ctypes
+        from api.services.wallet_service import (
+            GROOT_USER_ID, get_groot_wallet_address,
+            sign_transaction_with_groot_wallet,
+        )
+
+        # Check GROOT wallet first — fail fast with a clear message
+        with get_internal_db() as int_db:
+            groot_address = get_groot_wallet_address(int_db)
+            if not groot_address:
+                return {"success": False, "error": "GROOT wallet not initialized. Run scripts/init_groot_wallet.py"}
 
         # Connect to chain
         w3 = Web3(Web3.HTTPProvider(rpc_url))
         if not w3.is_connected():
             return {"success": False, "error": f"Cannot connect to RPC: {rpc_url}"}
 
-        chain_id = CHAIN_IDS.get(chain, w3.eth.chain_id)
+        chain_id = _get_chain_id(chain) or w3.eth.chain_id
 
-        # Reconstruct deployer private key from SSS shares
+        # Use GROOT's wallet — the ONE Wizard
         with get_internal_db() as int_db:
-            wallet = int_db.query(CustodialWallet).filter(
-                CustodialWallet.user_id == user_id,
-                CustodialWallet.is_active == True,  # noqa: E712
-            ).first()
-            if not wallet:
-                return {"success": False, "error": "No custodial wallet found for user"}
 
-            deployer_address = wallet.eth_address
-            share_records = (
-                int_db.query(WalletShare)
-                .filter(WalletShare.wallet_id == wallet.id)
-                .order_by(WalletShare.share_index)
-                .limit(wallet.threshold)
-                .all()
-            )
-            if len(share_records) < wallet.threshold:
-                return {"success": False, "error": "Insufficient shares for key reconstruction"}
+            # Check GROOT has gas before attempting deployment
+            groot_balance = w3.eth.get_balance(Web3.to_checksum_address(groot_address))
+            if groot_balance == 0:
+                return {
+                    "success": False,
+                    "error": f"GROOT wallet has zero balance on {chain}. Fund {groot_address} before deploying.",
+                }
 
-            wallet_key = derive_wallet_key(wallet.encryption_salt)
-            shares = []
-            for sr in share_records:
-                decrypted = decrypt_share(sr.encrypted_share, wallet_key)
-                shares.append((sr.share_index, decrypted))
-
-            private_key = bytearray(reconstruct_secret(shares, wallet.threshold))
-
-        try:
             # Build deployment transaction
             contract = w3.eth.contract(abi=abi, bytecode=bytecode)
-            nonce = w3.eth.get_transaction_count(deployer_address)
+            nonce = w3.eth.get_transaction_count(Web3.to_checksum_address(groot_address))
             gas_price = w3.eth.gas_price
 
-            # Build constructor transaction
             if constructor_args:
                 tx = contract.constructor(*constructor_args).build_transaction({
-                    "from": deployer_address,
+                    "from": groot_address,
                     "nonce": nonce,
                     "gasPrice": gas_price,
                     "chainId": chain_id,
                 })
             else:
                 tx = contract.constructor().build_transaction({
-                    "from": deployer_address,
+                    "from": groot_address,
                     "nonce": nonce,
                     "gasPrice": gas_price,
                     "chainId": chain_id,
@@ -480,38 +1096,36 @@ def deploy_worker(input_json: dict) -> dict:
             if gas_limit:
                 tx["gas"] = gas_limit
 
-            # Sign and send
-            signed = w3.eth.account.sign_transaction(tx, private_key=bytes(private_key))
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-
-            contract_address = receipt.contractAddress
-
-            logger.info(
-                "Contract deployed: chain=%s address=%s tx=%s user=%s",
-                chain, contract_address, tx_hash.hex(), user_id,
+            # Sign with GROOT's wallet (reconstructs key, signs, zeros)
+            raw_tx = sign_transaction_with_groot_wallet(
+                int_db, tx, admin_user_id=user_id or "pipeline",
             )
 
-            return {
-                "success": True,
-                "contract_address": contract_address,
-                "tx_hash": tx_hash.hex() if isinstance(tx_hash, bytes) else str(tx_hash),
-                "block_number": receipt.blockNumber,
-                "deployer_address": deployer_address,
-                "gas_used": receipt.gasUsed,
-                "chain": chain,
-                "chain_id": chain_id,
-            }
-        finally:
-            # Zero private key from memory
-            if len(private_key) > 0:
-                ctypes.memset(
-                    ctypes.addressof((ctypes.c_char * len(private_key)).from_buffer(private_key)),
-                    0, len(private_key),
-                )
+        # Broadcast
+        tx_hash = w3.eth.send_raw_transaction(
+            bytes.fromhex(raw_tx[2:] if raw_tx.startswith("0x") else raw_tx)
+        )
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+        contract_address = receipt.contractAddress
+
+        logger.info(
+            "GROOT deployed contract: chain=%s address=%s tx=%s requested_by=%s",
+            chain, contract_address, tx_hash.hex(), user_id,
+        )
+
+        return {
+            "success": True,
+            "contract_address": contract_address,
+            "tx_hash": tx_hash.hex() if isinstance(tx_hash, bytes) else str(tx_hash),
+            "block_number": receipt.blockNumber,
+            "deployer_address": groot_address,
+            "gas_used": receipt.gasUsed,
+            "chain": chain,
+            "chain_id": chain_id,
+        }
 
     except Exception as e:
-        logger.exception("Deploy worker failed for user %s on chain %s", user_id, chain)
+        logger.exception("GROOT deploy failed: requested_by=%s chain=%s", user_id, chain)
         return {"success": False, "error": str(e)}
 
 
@@ -541,7 +1155,7 @@ def verify_worker(input_json: dict) -> dict:
     if not contract_address:
         return {"success": False, "verified": False, "message": "No contract address"}
 
-    explorer_api = EXPLORER_APIS.get(chain)
+    explorer_api = _get_explorer_api(chain)
     if not explorer_api:
         return {
             "success": True,
@@ -624,15 +1238,19 @@ def verify_worker(input_json: dict) -> dict:
 
 
 # ── Worker 6: Transfer Ownership ──────────────────────────────────
+#
+# GROOT deployed the contract → GROOT owns it → GROOT transfers to user.
+# This uses GROOT's wallet, not the user's.
 
 def transfer_ownership_worker(input_json: dict) -> dict:
     """
-    Transfer contract ownership from GROOT's custodial wallet to the user's wallet.
+    Transfer contract ownership from GROOT's wallet to the user's personal wallet.
+    GROOT is the deployer and initial owner. This step gives the user control.
 
     Input:
-        user_id: str
+        user_id: str — for audit trail
         contract_address: str
-        new_owner: str — user's personal wallet address
+        new_owner: str — user's personal wallet address (SIWE address)
         chain: str
         rpc_url: str — optional
 
@@ -646,91 +1264,73 @@ def transfer_ownership_worker(input_json: dict) -> dict:
     contract_address = input_json.get("contract_address")
     new_owner = input_json.get("new_owner")
     chain = input_json.get("chain", "sepolia")
-    rpc_url = input_json.get("rpc_url") or CHAIN_RPC.get(chain)
+    rpc_url = input_json.get("rpc_url") or _get_rpc(chain)
 
-    if not all([user_id, contract_address, new_owner]):
-        return {"success": False, "error": "Missing required fields: user_id, contract_address, new_owner"}
+    if not all([contract_address, new_owner]):
+        return {"success": False, "error": "Missing required fields: contract_address, new_owner"}
     if not rpc_url:
         return {"success": False, "error": f"No RPC URL for chain: {chain}"}
 
     try:
         from web3 import Web3
         from api.database import get_internal_db
-        from api.services.wallet_crypto import derive_wallet_key, decrypt_share
-        from api.services.shamir import reconstruct_secret
-        from api.models.internal import CustodialWallet, WalletShare
-        import ctypes
+        from api.services.wallet_service import (
+            get_groot_wallet_address, sign_transaction_with_groot_wallet,
+        )
 
         w3 = Web3(Web3.HTTPProvider(rpc_url))
         if not w3.is_connected():
             return {"success": False, "error": f"Cannot connect to RPC: {rpc_url}"}
 
-        chain_id = CHAIN_IDS.get(chain, w3.eth.chain_id)
+        chain_id = _get_chain_id(chain) or w3.eth.chain_id
 
-        # Reconstruct deployer key
+        # Use GROOT's wallet — GROOT is the deployer/owner
         with get_internal_db() as int_db:
-            wallet = int_db.query(CustodialWallet).filter(
-                CustodialWallet.user_id == user_id,
-                CustodialWallet.is_active == True,  # noqa: E712
-            ).first()
-            if not wallet:
-                return {"success": False, "error": "No custodial wallet found"}
+            groot_address = get_groot_wallet_address(int_db)
+            if not groot_address:
+                return {"success": False, "error": "GROOT wallet not initialized"}
 
-            deployer_address = wallet.eth_address
-            share_records = (
-                int_db.query(WalletShare)
-                .filter(WalletShare.wallet_id == wallet.id)
-                .order_by(WalletShare.share_index)
-                .limit(wallet.threshold)
-                .all()
-            )
-            wallet_key = derive_wallet_key(wallet.encryption_salt)
-            shares = [(sr.share_index, decrypt_share(sr.encrypted_share, wallet_key))
-                      for sr in share_records]
-            private_key = bytearray(reconstruct_secret(shares, wallet.threshold))
-
-        try:
             # Ownable.transferOwnership(address)
             transfer_abi = [{"inputs": [{"name": "newOwner", "type": "address"}],
                              "name": "transferOwnership", "outputs": [], "stateMutability": "nonpayable",
                              "type": "function"}]
             contract = w3.eth.contract(address=Web3.to_checksum_address(contract_address), abi=transfer_abi)
 
-            nonce = w3.eth.get_transaction_count(deployer_address)
+            nonce = w3.eth.get_transaction_count(Web3.to_checksum_address(groot_address))
             tx = contract.functions.transferOwnership(
                 Web3.to_checksum_address(new_owner)
             ).build_transaction({
-                "from": deployer_address,
+                "from": groot_address,
                 "nonce": nonce,
                 "gasPrice": w3.eth.gas_price,
                 "chainId": chain_id,
             })
 
-            signed = w3.eth.account.sign_transaction(tx, private_key=bytes(private_key))
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            # Sign with GROOT's wallet
+            raw_tx = sign_transaction_with_groot_wallet(
+                int_db, tx, admin_user_id=user_id or "pipeline",
+            )
 
-            if receipt.status == 1:
-                logger.info(
-                    "Ownership transferred: contract=%s new_owner=%s chain=%s tx=%s",
-                    contract_address, new_owner, chain, tx_hash.hex(),
-                )
-                return {
-                    "success": True,
-                    "tx_hash": tx_hash.hex() if isinstance(tx_hash, bytes) else str(tx_hash),
-                    "new_owner": new_owner,
-                    "message": "Ownership transferred successfully",
-                }
-            else:
-                return {"success": False, "error": "Transaction reverted", "tx_hash": tx_hash.hex()}
+        # Broadcast
+        tx_hash = w3.eth.send_raw_transaction(
+            bytes.fromhex(raw_tx[2:] if raw_tx.startswith("0x") else raw_tx)
+        )
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
 
-        finally:
-            if len(private_key) > 0:
-                ctypes.memset(
-                    ctypes.addressof((ctypes.c_char * len(private_key)).from_buffer(private_key)),
-                    0, len(private_key),
-                )
+        if receipt.status == 1:
+            logger.info(
+                "GROOT transferred ownership: contract=%s new_owner=%s chain=%s tx=%s",
+                contract_address, new_owner, chain, tx_hash.hex(),
+            )
+            return {
+                "success": True,
+                "tx_hash": tx_hash.hex() if isinstance(tx_hash, bytes) else str(tx_hash),
+                "new_owner": new_owner,
+                "message": f"Ownership transferred from GROOT to {new_owner}",
+            }
+        else:
+            return {"success": False, "error": "Transaction reverted", "tx_hash": tx_hash.hex()}
 
     except Exception as e:
-        logger.exception("Transfer ownership failed: contract=%s user=%s", contract_address, user_id)
+        logger.exception("GROOT ownership transfer failed: contract=%s", contract_address)
         return {"success": False, "error": str(e)}

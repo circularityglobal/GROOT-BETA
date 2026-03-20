@@ -49,6 +49,9 @@ python-dotenv==1.0.*
 # Semantic embeddings (RAG)
 sentence-transformers>=2.7
 
+# Vector search (native KNN in SQLite)
+sqlite-vec>=0.1.6
+
 # Schema migrations
 alembic>=1.13              # Database migration tool (MIT license)
 

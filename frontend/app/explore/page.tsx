@@ -118,11 +118,30 @@ function ProjectCard({ project }: { project: any }) {
   )
 }
 
-function SmartContractCard({ contract }: { contract: any }) {
+function SmartContractCard({ contract, isExpanded, onToggle }: { contract: any; isExpanded: boolean; onToggle: () => void }) {
+  const [sdk, setSdk] = useState<any>(null)
+  const [loadingSdk, setLoadingSdk] = useState(false)
+
+  const loadSdk = async () => {
+    if (sdk) return
+    setLoadingSdk(true)
+    try {
+      const token = localStorage.getItem('refinet_token')
+      const resp = await fetch(`${API_URL}/explore/contracts/${contract.id}/sdk`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (resp.ok) setSdk(await resp.json())
+    } catch {}
+    setLoadingSdk(false)
+  }
+
+  useEffect(() => { if (isExpanded) loadSdk() }, [isExpanded])
+
   return (
     <div
-      className="card transition-all block"
+      className="card transition-all block cursor-pointer"
       style={{ padding: 20 }}
+      onClick={onToggle}
       onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 0 20px var(--refi-teal-glow)')}
       onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}
     >
@@ -141,6 +160,9 @@ function SmartContractCard({ contract }: { contract: any }) {
           </span>
           <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>
             {contract.event_count} evt
+          </span>
+          <span style={{ fontSize: 12, transform: isExpanded ? 'rotate(180deg)' : '', transition: 'transform 0.2s' }}>
+            &#9660;
           </span>
         </div>
       </div>
@@ -173,6 +195,60 @@ function SmartContractCard({ contract }: { contract: any }) {
           </span>
         )}
       </div>
+
+      {/* Expanded detail panel */}
+      {isExpanded && (
+        <div onClick={e => e.stopPropagation()} style={{ marginTop: 16, borderTop: '1px solid var(--border-subtle)', paddingTop: 16 }}>
+          {loadingSdk && <p style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Loading SDK...</p>}
+          {sdk && (
+            <div>
+              {/* Public functions */}
+              {sdk.functions?.public?.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <h4 style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Public Functions ({sdk.functions.public.length})
+                  </h4>
+                  <div className="space-y-1">
+                    {sdk.functions.public.map((fn: any, i: number) => (
+                      <div key={i} style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)', padding: '3px 8px', borderRadius: 4, background: 'var(--bg-secondary)' }}>
+                        <span style={{ color: fn.is_read_only ? '#3B82F6' : '#F59E0B' }}>{fn.mutability}</span>
+                        {' '}{fn.signature || fn.name}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Admin functions */}
+              {sdk.functions?.owner_admin?.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <h4 style={{ fontSize: 12, fontWeight: 700, color: '#EF4444', marginBottom: 6 }}>
+                    Restricted Functions ({sdk.functions.owner_admin.length})
+                  </h4>
+                  <div className="space-y-1">
+                    {sdk.functions.owner_admin.map((fn: any, i: number) => (
+                      <div key={i} style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-secondary)', padding: '3px 8px', borderRadius: 4, background: '#EF444410' }}>
+                        [{fn.access}] {fn.signature || fn.name}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Security summary */}
+              {sdk.security_summary && (
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  <span>Pattern: <strong>{sdk.security_summary.access_control_pattern}</strong></span>
+                  <span>Public: {sdk.security_summary.public_functions}</span>
+                  <span>Admin: {sdk.security_summary.admin_functions}</span>
+                  {sdk.security_summary.dangerous_functions > 0 && (
+                    <span style={{ color: '#EF4444' }}>Dangerous: {sdk.security_summary.dangerous_functions}</span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          {!sdk && !loadingSdk && <p style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>No SDK available</p>}
+        </div>
+      )}
     </div>
   )
 }
@@ -191,6 +267,7 @@ export default function ExplorePage() {
   const [loading, setLoading] = useState(true)
   // Smart contracts state
   const [smartContracts, setSmartContracts] = useState<any[]>([])
+  const [expandedContract, setExpandedContract] = useState<string | null>(null)
   const [scTotal, setScTotal] = useState(0)
   const [scHasNext, setScHasNext] = useState(false)
   const [scLoading, setScLoading] = useState(false)
@@ -496,7 +573,7 @@ export default function ExplorePage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {smartContracts.map((c: any) => <SmartContractCard key={c.id} contract={c} />)}
+          {smartContracts.map((c: any) => <SmartContractCard key={c.id} contract={c} isExpanded={expandedContract === c.id} onToggle={() => setExpandedContract(expandedContract === c.id ? null : c.id)} />)}
         </div>
       )}
 

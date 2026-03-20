@@ -1,5 +1,5 @@
 # REFINET Cloud API Reference
-## Version 3.1 · March 2026
+## Version 3.2 · March 2026
 
 > Every endpoint documented here has been verified against the source code. Request/response schemas, authentication requirements, and security constraints are extracted directly from the codebase — not written from memory or specification.
 
@@ -524,3 +524,75 @@ ADMIN_WALLET=0xE302932D42C751404AeD466C8929F1704BA89D5A
 **Encryption:** AES-256-GCM for all stored secrets (TOTP keys, provider keys, wallet shares). Key previews computed at save time — encrypted keys are never decrypted for display.
 
 **Audit:** All admin operations logged to append-only `AdminAuditLog`. Provider key access tracked with usage counts and timestamps.
+
+---
+
+## Wizard Pipeline Endpoints (v3.2)
+
+### Pipeline Execution
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/pipeline/start` | JWT | Start full wizard pipeline (compile→test→parse→deploy→frontend→appstore) |
+| POST | `/pipeline/compile-test` | JWT | Start compile+test only |
+| POST | `/pipeline/deploy` | JWT | Start deploy pipeline |
+| GET | `/pipeline/` | JWT | List user's pipelines |
+| GET | `/pipeline/{id}` | JWT | Get pipeline detail with all steps |
+| POST | `/pipeline/{id}/cancel` | JWT | Cancel running pipeline |
+
+### Admin Approvals (Master Admin)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/pipeline/admin/pending-actions` | master_admin | List pending Tier 2 actions |
+| POST | `/pipeline/admin/pending-actions/{id}/approve` | master_admin | Approve action (resumes pipeline or executes GROOT tx) |
+| POST | `/pipeline/admin/pending-actions/{id}/reject` | master_admin | Reject action (fails linked pipeline) |
+
+### Worker Endpoints (Direct Invocation)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/workers/hardhat/compile` | JWT | Compile Solidity via Hardhat/solc |
+| POST | `/workers/hardhat/test` | JWT | Run contract tests |
+| POST | `/workers/parse` | JWT | Parse ABI → SDK definition |
+| POST | `/workers/frontend/generate` | JWT | Generate 3-page React DApp from SDK |
+| POST | `/workers/rbac/check` | master_admin | Check RBAC permissions |
+| POST | `/workers/deploy` | master_admin | Deploy contract via GROOT wallet |
+| POST | `/workers/verify` | master_admin | Verify on block explorer |
+
+### GROOT Wallet (Master Admin)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/admin/wallet` | master_admin | GROOT wallet address, creation date, share config |
+| GET | `/admin/wallet/balance/{chain}` | master_admin | ETH balance on specific chain |
+| GET | `/admin/wallet/transactions` | master_admin | Recent deployments and pending actions |
+| POST | `/admin/wallet/transfer` | master_admin | Initiate fund transfer (creates PendingAction) |
+
+### Chain Management (Master Admin)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/admin/chains` | admin/master_admin | List all supported chains |
+| POST | `/admin/chains` | master_admin | Add new EVM chain |
+| POST | `/admin/chains/import` | master_admin | Import chain from chainlist.org by chain_id |
+| PUT | `/admin/chains/{chain_id}` | master_admin | Update chain config (RPC, explorer, etc.) |
+| DELETE | `/admin/chains/{chain_id}` | master_admin | Deactivate chain |
+
+### CAG Endpoints (Contract-Augmented Generation)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/explore/chains` | No | List active chains with contract counts |
+| GET | `/explore/fetch-abi?address=...&chain=...` | No | Fetch ABI from block explorer |
+| POST | `/explore/cag/execute` | No | Call view/pure function on-chain (no gas) |
+| POST | `/explore/cag/act` | JWT | Request state-changing call (creates PendingAction) |
+
+### Deployments
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/deployments/` | JWT | List user's deployed contracts |
+| GET | `/deployments/{id}` | JWT | Deployment detail with ownership status |
+| POST | `/deployments/{id}/transfer` | JWT | Initiate ownership transfer |
+| GET | `/deployments/{id}/verify-owner` | JWT | Check on-chain owner |

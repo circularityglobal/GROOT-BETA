@@ -1,11 +1,10 @@
 """REFINET Cloud — Inference Tests
 Tests for anonymous access, auth enforcement, and rate limiting.
-BitNet sidecar is not running during tests, so inference calls will fail at the
-HTTP call to BitNet — but we can verify auth behavior up to that point.
+BitNet sidecar is not running during tests, so we mock the ModelGateway.
 """
 
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 
 from api.main import app
@@ -49,41 +48,53 @@ def client():
     return TestClient(app)
 
 
+def _mock_inference_result(**overrides):
+    """Build a mock InferenceResult matching the gateway's return type."""
+    from api.services.providers.base import InferenceResult
+    defaults = {
+        "content": "Hello! I am Groot.",
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "model": "bitnet-b1.58-2b",
+        "provider": "bitnet",
+        "finish_reason": "stop",
+    }
+    defaults.update(overrides)
+    return InferenceResult(**defaults)
+
+
 def test_anonymous_access_allowed(client):
     """POST /v1/chat/completions without auth should NOT return 401."""
-    with patch("api.routes.inference.call_bitnet", new_callable=AsyncMock) as mock_bitnet:
-        mock_bitnet.return_value = {
-            "content": "Hello! I am Groot.",
-            "prompt_tokens": 10,
-            "completion_tokens": 5,
-        }
+    mock_gateway = MagicMock()
+    mock_gateway.complete = AsyncMock(return_value=_mock_inference_result())
+
+    with patch("api.routes.inference.ModelGateway.get", return_value=mock_gateway):
         resp = client.post("/v1/chat/completions", json={
             "messages": [{"role": "user", "content": "hello"}],
+            "stream": False,
         })
         assert resp.status_code != 401
-        # Should succeed (200) since BitNet is mocked
         assert resp.status_code == 200
         data = resp.json()
         assert data["choices"][0]["message"]["content"] == "Hello! I am Groot."
 
 
 def test_anonymous_max_tokens_capped(client):
-    """Anonymous requests should have max_tokens capped to 256."""
-    with patch("api.routes.inference.call_bitnet", new_callable=AsyncMock) as mock_bitnet:
-        mock_bitnet.return_value = {
-            "content": "Response",
-            "prompt_tokens": 10,
-            "completion_tokens": 5,
-        }
+    """Anonymous requests should have max_tokens capped."""
+    mock_gateway = MagicMock()
+    mock_gateway.complete = AsyncMock(return_value=_mock_inference_result(content="Response"))
+
+    with patch("api.routes.inference.ModelGateway.get", return_value=mock_gateway):
         resp = client.post("/v1/chat/completions", json={
             "messages": [{"role": "user", "content": "hello"}],
             "max_tokens": 4096,  # requesting more than anonymous limit
+            "stream": False,
         })
         assert resp.status_code == 200
-        # Verify BitNet was called with capped tokens
-        assert mock_bitnet.called
-        call_kwargs = mock_bitnet.call_args
-        assert call_kwargs[1]["max_tokens"] <= 256
+        # Verify gateway was called with capped tokens
+        assert mock_gateway.complete.called
+        call_kwargs = mock_gateway.complete.call_args
+        assert call_kwargs.kwargs["max_tokens"] <= 256
 
 
 def test_invalid_bearer_token_rejected(client):

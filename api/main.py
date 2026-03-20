@@ -47,6 +47,27 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logging.getLogger("refinet").warning(f"Config seed failed: {e}")
 
+    # Seed default EVM chains into supported_chains table
+    try:
+        from api.database import get_public_db
+        from api.models.chain import SupportedChain
+        with get_public_db() as pub_db:
+            existing = pub_db.query(SupportedChain).count()
+            if existing == 0:
+                defaults = [
+                    SupportedChain(chain_id=1, name="Ethereum Mainnet", short_name="ethereum", currency="ETH", rpc_url="https://eth.llamarpc.com", explorer_url="https://etherscan.io", explorer_api_url="https://api.etherscan.io/api", added_by="system"),
+                    SupportedChain(chain_id=137, name="Polygon", short_name="polygon", currency="MATIC", rpc_url="https://polygon-rpc.com", explorer_url="https://polygonscan.com", explorer_api_url="https://api.polygonscan.com/api", added_by="system"),
+                    SupportedChain(chain_id=42161, name="Arbitrum One", short_name="arbitrum", currency="ETH", rpc_url="https://arb1.arbitrum.io/rpc", explorer_url="https://arbiscan.io", explorer_api_url="https://api.arbiscan.io/api", added_by="system"),
+                    SupportedChain(chain_id=10, name="Optimism", short_name="optimism", currency="ETH", rpc_url="https://mainnet.optimism.io", explorer_url="https://optimistic.etherscan.io", explorer_api_url="https://api-optimistic.etherscan.io/api", added_by="system"),
+                    SupportedChain(chain_id=8453, name="Base", short_name="base", currency="ETH", rpc_url="https://mainnet.base.org", explorer_url="https://basescan.org", explorer_api_url="https://api.basescan.org/api", added_by="system"),
+                    SupportedChain(chain_id=11155111, name="Sepolia", short_name="sepolia", currency="ETH", rpc_url="https://rpc.sepolia.org", explorer_url="https://sepolia.etherscan.io", explorer_api_url="https://api-sepolia.etherscan.io/api", is_testnet=True, added_by="system"),
+                ]
+                for c in defaults:
+                    pub_db.add(c)
+                logging.getLogger("refinet").info("Seeded 6 default EVM chains")
+    except Exception as e:
+        logging.getLogger("refinet").warning(f"Chain seed skipped: {e}")
+
     # ── Ensure FTS5 index exists for knowledge search ───────────
     try:
         from api.database import get_public_db
@@ -55,6 +76,15 @@ async def lifespan(app: FastAPI):
             ensure_fts5(pub_db)
     except Exception as e:
         logging.getLogger("refinet").warning(f"FTS5 init skipped: {e}")
+
+    # ── Ensure sqlite-vec vector index exists ───────────────────
+    try:
+        from api.database import get_public_db
+        from api.services.vector_memory import ensure_vec_index
+        with get_public_db() as pub_db:
+            ensure_vec_index(pub_db)
+    except Exception as e:
+        logging.getLogger("refinet").warning(f"Vector memory init skipped: {e}")
 
     # ── Initialize model gateway (multi-provider inference) ─────
     try:
@@ -262,6 +292,10 @@ def create_app() -> FastAPI:
     from api.routes.pipeline import router as pipeline_router
     app.include_router(pipeline_router)
 
+    # ── Individual Worker Endpoints ──────────────────────────────
+    from api.routes.workers import router as workers_router
+    app.include_router(workers_router)
+
     # ── Deployment Tracking Routes ─────────────────────────────────
     from api.routes.deployments import router as deployments_router
     app.include_router(deployments_router)
@@ -273,6 +307,10 @@ def create_app() -> FastAPI:
     # ── Broker Routes ──────────────────────────────────────────────
     from api.routes.broker import router as broker_router
     app.include_router(broker_router)
+
+    # ── Vector Memory Routes ─────────────────────────────────────
+    from api.routes.vector_memory import router as vector_memory_router
+    app.include_router(vector_memory_router)
 
     # ── DApp Factory Routes ───────────────────────────────────────
     from api.routes.dapp import router as dapp_router

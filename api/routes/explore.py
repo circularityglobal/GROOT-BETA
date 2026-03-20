@@ -125,16 +125,44 @@ def get_public_sdk(
 def list_chains(
     db: Session = Depends(public_db_dependency),
 ):
-    """List supported chains with public contract counts."""
-    results = db.query(
+    """List all active chains from registry with public contract counts."""
+    from api.services.chain_registry import ChainRegistry
+    chains = ChainRegistry.get().get_all_chains(active_only=True)
+
+    # Get contract counts per chain
+    counts = db.query(
         ContractRepo.chain,
         sqlfunc.count(ContractRepo.id).label("count"),
     ).filter(
         ContractRepo.is_public == True,  # noqa: E712
         ContractRepo.is_active == True,  # noqa: E712
     ).group_by(ContractRepo.chain).all()
+    count_map = {chain: count for chain, count in counts}
 
-    return [{"chain": chain, "count": count} for chain, count in results]
+    # Also count via contract_deployments
+    try:
+        from api.models.chain import ContractDeployment
+        dep_counts = db.query(
+            ContractDeployment.chain_id,
+            sqlfunc.count(ContractDeployment.id).label("count"),
+        ).group_by(ContractDeployment.chain_id).all()
+        dep_map = {cid: count for cid, count in dep_counts}
+    except Exception:
+        dep_map = {}
+
+    result = []
+    for c in chains:
+        contract_count = count_map.get(c["short_name"], 0) + dep_map.get(c["chain_id"], 0)
+        result.append({
+            "chain_id": c["chain_id"],
+            "name": c["name"],
+            "short_name": c["short_name"],
+            "currency": c["currency"],
+            "icon_url": c.get("icon_url"),
+            "is_testnet": c["is_testnet"],
+            "contract_count": contract_count,
+        })
+    return result
 
 
 @router.get("/search")
@@ -262,3 +290,125 @@ def get_user_public_contracts(
         "total_public": len(items),
         "contracts": items,
     }
+
+
+# ── Block Explorer ABI Fetch ─────────────────────────────────────
+
+EXPLORER_API_URLS = {
+    "ethereum": "https://api.etherscan.io/api",
+    "sepolia": "https://api-sepolia.etherscan.io/api",
+    "base": "https://api.basescan.org/api",
+    "polygon": "https://api.polygonscan.com/api",
+    "arbitrum": "https://api.arbiscan.io/api",
+    "optimism": "https://api-optimistic.etherscan.io/api",
+}
+
+
+@router.get("/fetch-abi")
+def fetch_abi_from_explorer(
+    address: str = Query(..., min_length=42, max_length=42),
+    chain: str = Query("ethereum"),
+    db: Session = Depends(public_db_dependency),
+):
+    """
+    Fetch a verified contract's ABI from a block explorer (Etherscan/Basescan/etc).
+    Public endpoint — helps users import contracts without manual ABI copying.
+    """
+    import urllib.request
+    import json as _json
+
+    api_url = EXPLORER_API_URLS.get(chain)
+    if not api_url:
+        raise HTTPException(status_code=400, detail=f"Unsupported chain: {chain}. Supported: {list(EXPLORER_API_URLS.keys())}")
+
+    try:
+        url = f"{api_url}?module=contract&action=getabi&address={address}"
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = _json.loads(resp.read())
+
+        if data.get("status") != "1":
+            return {
+                "success": False,
+                "address": address,
+                "chain": chain,
+                "error": data.get("result", "ABI not available — contract may not be verified"),
+            }
+
+        abi = _json.loads(data["result"])
+        # Extract contract name from first function or constructor
+        contract_name = "Contract"
+        for entry in abi:
+            if entry.get("type") == "constructor":
+                continue
+            if entry.get("type") == "function":
+                # Guess name from common patterns
+                break
+
+        return {
+            "success": True,
+            "address": address,
+            "chain": chain,
+            "abi": abi,
+            "function_count": sum(1 for e in abi if e.get("type") == "function"),
+            "event_count": sum(1 for e in abi if e.get("type") == "event"),
+        }
+    except Exception as e:
+        return {"success": False, "address": address, "chain": chain, "error": str(e)}
+
+
+# ── CAG Execute & Act (Authenticated) ────────────────────────────
+
+@router.post("/cag/execute")
+def cag_execute_endpoint(
+    body: dict,
+    db: Session = Depends(public_db_dependency),
+):
+    """
+    CAG Mode 2: Execute a view/pure function on-chain. No gas, no approval needed.
+    Body: { contract_address, chain, function_name, args? }
+    """
+    from api.services.contract_brain import cag_execute
+    return cag_execute(
+        db,
+        contract_address=body.get("contract_address", ""),
+        chain=body.get("chain", "ethereum"),
+        function_name=body.get("function_name", ""),
+        args=body.get("args", []),
+    )
+
+
+@router.post("/cag/act")
+def cag_act_endpoint(
+    body: dict,
+    request=None,
+    db: Session = Depends(public_db_dependency),
+):
+    """
+    CAG Mode 3: Request a state-changing function call.
+    Creates a PendingAction that requires master_admin approval.
+    Body: { contract_address, chain, function_name, args? }
+    """
+    from fastapi import Request
+    from api.auth.jwt import decode_access_token
+
+    # Require auth for state-changing actions
+    auth_header = ""
+    if request and hasattr(request, 'headers'):
+        auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required for state-changing calls")
+    try:
+        payload = decode_access_token(auth_header[7:])
+        user_id = payload["sub"]
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    from api.services.contract_brain import cag_act
+    return cag_act(
+        db,
+        user_id=user_id,
+        contract_address=body.get("contract_address", ""),
+        chain=body.get("chain", "ethereum"),
+        function_name=body.get("function_name", ""),
+        args=body.get("args", []),
+    )

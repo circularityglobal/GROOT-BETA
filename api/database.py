@@ -5,6 +5,8 @@ public.db  → user-facing data (accessible via API)
 internal.db → admin-only data (NEVER exposed via public API)
 """
 
+import logging as _logging
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase
 from contextlib import contextmanager
@@ -34,6 +36,56 @@ def _enable_wal_mode(dbapi_conn, connection_record):
     cursor.close()
 
 
+# Cached diagnostic for sqlite-vec loading
+_vec_load_status: dict = {"loaded": False, "reason": None}
+
+
+def get_vec_load_status() -> dict:
+    """Return diagnostic info about sqlite-vec extension loading."""
+    return _vec_load_status.copy()
+
+
+def _load_vec_extension(dbapi_conn, connection_record):
+    """Load sqlite-vec extension if available. Falls back gracefully."""
+    global _vec_load_status
+
+    # If we already know it can't load, skip on subsequent connections
+    if _vec_load_status["reason"] is not None and not _vec_load_status["loaded"]:
+        return
+
+    try:
+        import sqlite_vec  # noqa: F811
+    except ImportError:
+        _vec_load_status = {"loaded": False, "reason": "sqlite-vec package not installed (pip install sqlite-vec)"}
+        _logging.getLogger("refinet.database").warning(_vec_load_status["reason"])
+        return
+
+    # Check if this Python build supports loading C extensions into SQLite
+    if not hasattr(dbapi_conn, "enable_load_extension"):
+        _vec_load_status = {
+            "loaded": False,
+            "reason": (
+                "Python's sqlite3 module was compiled without extension loading support. "
+                "This is common on macOS system Python. Fix: install Python via Homebrew "
+                "(brew install python3) or pyenv, which compile with --enable-loadable-sqlite-extensions."
+            ),
+        }
+        _logging.getLogger("refinet.database").warning(
+            "sqlite-vec: skipped — Python sqlite3 lacks enable_load_extension. "
+            "Install Python from Homebrew or pyenv to enable native vector search."
+        )
+        return
+
+    try:
+        dbapi_conn.enable_load_extension(True)
+        sqlite_vec.load(dbapi_conn)
+        dbapi_conn.enable_load_extension(False)
+        _vec_load_status = {"loaded": True, "reason": None}
+    except Exception as e:
+        _vec_load_status = {"loaded": False, "reason": f"Extension load failed: {e}"}
+        _logging.getLogger("refinet.database").warning(f"sqlite-vec: load failed — {e}")
+
+
 def _create_engine(url: str):
     """Create a SQLAlchemy engine with SQLite WAL mode."""
     engine = create_engine(
@@ -42,6 +94,7 @@ def _create_engine(url: str):
         pool_pre_ping=True,
     )
     event.listen(engine, "connect", _enable_wal_mode)
+    event.listen(engine, "connect", _load_vec_extension)
     return engine
 
 

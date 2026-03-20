@@ -22,16 +22,24 @@ See the full specification in `docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md`.
 - TLS: Let's Encrypt via Certbot
 - Server: Oracle Cloud ARM A1 Flex (4 OCPUs, 24GB RAM, 200GB storage)
 
+**GROOT is the Sole Wizard:**
+- An Agent reads. A Wizard acts. GROOT is the only Wizard in REFINET Cloud.
+- GROOT has ONE wallet (SSS-secured, 3-of-5 threshold). All on-chain actions go through it.
+- Users interact with GROOT to deploy, query, and transact. GROOT never acts alone — master_admin approves all Tier 2 actions.
+- CAG (Contract-Augmented Generation) gives GROOT access to the contract registry: Query (search), Execute (view calls), Act (sign transactions after approval).
+
 **Platform Subsystems:**
 - AI Inference — OpenAI-compatible API with RAG + CAG context injection, multi-provider gateway
-- Agent Engine — Autonomous multi-agent platform with SOUL identity, 4-tier memory, 6-phase cognitive loop, tool access, and delegation
-- Context Assembly — 7-layer injection stack with token budget tracking (SOUL, agent, memory, RAG, skills, safety, runtime)
-- Trigger Router — Unified event→agent task routing from 5 sources (heartbeat, cron, webhook, chain, messenger)
+- Agent Engine — Autonomous multi-agent platform with SOUL identity, 5-tier memory, 6-phase cognitive loop, tool access, CAG integration, and delegation
+- Context Assembly — 8-layer injection stack with token budget tracking (SOUL, agent, memory, RAG, **CAG**, skills, safety, runtime)
+- Trigger Router — Unified event→agent task routing from 7 sources (heartbeat, cron, webhook, chain, messenger, pipeline, broker)
 - Output Router — Multi-target task result routing (DB, response, memory, agent chaining, webhook)
+- **Wizard Pipeline** — 8-stage DAG: compile → test → parse → RBAC → deploy → reparse → frontend → appstore, with parallel execution
 - Smart Contract Registry — GitHub-style project management with ABI parsing and SDK generation
-- GROOT Brain — Per-user contract repository with source code privacy
-- DApp Factory — Template-based DApp assembly from registry contracts (token-dashboard, nft-gallery, staking-ui, dao-voter, multi-send)
+- GROOT Brain — Per-user contract repository with source code privacy + CAG three access modes
+- DApp Factory — Template-based DApp assembly from registry contracts with LLM-driven component generation
 - App Store — Publish and discover DApps, agents, tools, and templates with sandbox review pipeline
+- **Dynamic Chain Registry** — Database-backed EVM chain management, admin adds networks via chainlist.org
 - Chain Listener — On-chain event monitoring with automatic agent task creation
 - Wallet Identity — Multi-chain identity with ENS resolution and pseudo-IPv6 addressing
 - Messaging — Wallet-to-wallet DMs, groups, email bridge (SMTP), messenger bridge, typing indicators
@@ -42,7 +50,7 @@ See the full specification in `docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md`.
 - Script Runner — Safe script execution with category-based access control (ops, maintenance, analysis, chain, dapp)
 - JSONL Logger — File-based episodic audit trail alongside DB storage
 - Configuration — YAML hierarchy (default → production → ENV) with dot-notation access
-- Admin Panel — Role management, secrets vault, audit log, system config, MCP registry
+- Admin Panel — Role management (master_admin, admin, operator, readonly), secrets vault, audit log, chain management, GROOT wallet, pending actions
 
 **Cardinal Rules:**
 1. User source code is PRIVATE — GROOT never reads `source_code`, only ABIs and SDKs
@@ -54,11 +62,11 @@ See the full specification in `docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md`.
 7. Chain watchers may detect events but NEVER initiate state-changing transactions autonomously
 
 **Scale:**
-- 25 route files, 210+ API endpoints
-- 50+ database tables (public + internal)
-- 64 service modules, 12 auth modules
-- 9 migration files, 6 middleware modules
-- 10 test files, 29 operational scripts
-- 16 frontend pages, 17 components, 10 documentation files
+- 29 route files, 302+ API endpoints
+- 71+ database tables (public + internal)
+- 70+ service modules, 12 auth modules
+- 16 migration files, 6 middleware modules
+- 10 test files, 40+ operational scripts
+- 24 frontend pages, 20+ components, 14 documentation files
 - 5 root control documents (SOUL, SAFETY, MEMORY, HEARTBEAT, AGENTS)
 - 4 skills, 2 YAML config files, JSONL audit logging

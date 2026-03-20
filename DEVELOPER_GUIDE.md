@@ -188,15 +188,48 @@ BitNet (sovereign, free) → Gemini (free tier) → Ollama (local) → LM Studio
 Users can also bring their own API keys for any OpenAI-compatible provider.
 
 ### 6. Wizard Pipeline (DAG Orchestrator)
-On-chain operations are coordinated by a DAG orchestrator with 3 pipeline templates:
+GROOT is the **sole Wizard** — all on-chain actions go through GROOT's SSS-secured wallet. The DAG orchestrator coordinates 4 pipeline templates:
 
 ```
 compile_test:  [compile] → [test]
 deploy:        [compile] → [test] → [rbac_check] → [deploy] → [verify]
 full:          [compile] → [test] → [rbac_check] → [deploy] → [verify] → [transfer_ownership]
+wizard:        [compile] → [test] → [parse] ─┬→ [rbac_check] → [deploy] → [reparse] ─┬→ [appstore]
+                                              └→ [frontend] ─────────────────────────────┘
 ```
 
-Each step is a deterministic worker. The `rbac_check` step can pause the pipeline and create a PendingAction for admin approval before proceeding with mainnet deployments.
+The `wizard` template runs **frontend generation in parallel with deployment** — both depend on parse, not each other. Master admin approval is required for all Tier 2 actions.
+
+### 6.1 CAG (Contract-Augmented Generation)
+GROOT uses the contract registry as its logic repository through three access modes:
+- **Query** — search public SDKs to answer questions (autonomous)
+- **Execute** — call view/pure functions on-chain to read state (autonomous, no gas)
+- **Act** — request state-changing transactions (creates PendingAction for master_admin approval)
+
+CAG context is injected as Layer 3.5 in GROOT's 8-layer system prompt (SOUL → agent → memory → RAG → **CAG** → skills → safety → runtime).
+
+### 6.2 Roles & Authorization
+- **master_admin** — exclusive control over GROOT's wallet, Tier 2 approvals, chain management
+- **admin** — system administration, user management, app store review
+- **operator** — monitoring and operational tasks
+- **readonly** — view-only access
+
+### 6.3 Dynamic Chain Registry
+Chains are stored in the `supported_chains` database table. Admin can add any EVM chain via:
+```bash
+# API: import from chainlist.org
+POST /admin/chains/import { "chain_id": 43114 }  # Avalanche
+
+# Or manually
+POST /admin/chains { "chain_id": 43114, "name": "Avalanche", "rpc_url": "https://..." }
+```
+
+### 6.4 Contract Import
+Place chain-agnostic ABI files in `data/contracts/abis/`:
+```bash
+python3 scripts/import_contracts.py                    # Import all
+python3 scripts/import_contracts.py --fetch 0x... --chain ethereum  # Fetch from explorer
+```
 
 ### 7. Event Bus
 In-process pub/sub with wildcard pattern matching. All subsystems communicate via events:

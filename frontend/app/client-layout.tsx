@@ -392,6 +392,9 @@ function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             )}
 
+            <SidebarItem href="/pipeline/" icon={<ProjectsIcon />} label="Wizard" active={isActive('/pipeline')} collapsed={collapsed} />
+            <SidebarItem href="/deployments/" icon={<RegistryIcon />} label="Deployments" active={isActive('/deployments')} collapsed={collapsed} />
+            <SidebarItem href="/dapp/" icon={<StoreIcon />} label="DApp Factory" active={isActive('/dapp')} collapsed={collapsed} />
             <SidebarItem href="/projects/" icon={<ProjectsIcon />} label="Projects" active={isActive('/projects')} collapsed={collapsed} />
             <SidebarItem href="/explore/" icon={<RegistryIcon />} label="Registry" active={isActive('/explore')} collapsed={collapsed} />
             <SidebarItem href="/store/" icon={<StoreIcon />} label="App Store" active={isActive('/store')} collapsed={collapsed} />

@@ -248,7 +248,7 @@ When reflecting, be honest about outcomes: "success", "partial", or "failure".""
     # ── Layer 3: RAG Context ─────────────────────────────────────
     from api.services.rag import build_rag_context
     rag_context, rag_sources = build_rag_context(db, user_query, user_id=user_id)
-    sources = rag_sources
+    sources = list(rag_sources) if rag_sources else []
 
     if rag_context:
         rag_header = "Use the following reference information to inform your response. Cite it naturally — don't say \"according to the knowledge base.\""
@@ -258,6 +258,31 @@ When reflecting, be honest about outcomes: "success", "partial", or "failure".""
             parts.append(rag_text)
     else:
         budget.allocate("rag", "")
+
+    # ── Layer 3.5: CAG Context (Contract-Augmented Generation) ──
+    # GROOT is the Wizard — it uses the contract registry as its logic repository.
+    # Public SDK definitions are injected here so GROOT can reason about contracts.
+    try:
+        from api.services.contract_brain import get_sdk_context_for_groot
+        cag_context = get_sdk_context_for_groot(db, user_query, max_results=3)
+        if cag_context:
+            cag_header = (
+                "## Contract Knowledge (CAG)\n"
+                "You are GROOT, the sole Wizard of REFINET Cloud. You have access to the contract registry below.\n"
+                "Use this knowledge to answer questions about contracts, help users deploy, and suggest interactions.\n"
+                "You can: query contracts (cag_query), read on-chain state (cag_execute), "
+                "or request state-changing actions (cag_act — requires master_admin approval).\n\n"
+            )
+            cag_full = cag_header + cag_context
+            cag_text = budget.allocate("cag", cag_full)
+            if cag_text:
+                parts.append(cag_text)
+                sources.append({"type": "cag", "description": "Contract registry SDK definitions"})
+        else:
+            budget.allocate("cag", "")
+    except Exception as e:
+        budget.allocate("cag", "")
+        logger.debug(f"CAG context skipped: {e}")
 
     # ── Layer 4: Skills Metadata ─────────────────────────────────
     skills_meta = load_skills_metadata()

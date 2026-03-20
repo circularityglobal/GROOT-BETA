@@ -12,7 +12,7 @@ export default function AdminPage() {
   const [secrets, setSecrets] = useState<any[]>([])
   const [storeApps, setStoreApps] = useState<any[]>([])
   const [storeStats, setStoreStats] = useState<any>(null)
-  const [tab, setTab] = useState<'stats' | 'users' | 'audit' | 'mcp' | 'secrets' | 'store' | 'reviews' | 'wallets' | 'providers'>('stats')
+  const [tab, setTab] = useState<'stats' | 'users' | 'audit' | 'mcp' | 'secrets' | 'store' | 'reviews' | 'wallets' | 'networks' | 'providers'>('stats')
   const [error, setError] = useState('')
   const [reviewSubs, setReviewSubs] = useState<any[]>([])
   const [reviewStats, setReviewStats] = useState<any>(null)
@@ -218,7 +218,7 @@ export default function AdminPage() {
     )
   }
 
-  const tabs = ['stats', 'users', 'reviews', 'store', 'providers', 'wallets', 'audit', 'mcp', 'secrets'] as const
+  const tabs = ['stats', 'users', 'reviews', 'store', 'providers', 'wallets', 'networks', 'audit', 'mcp', 'secrets'] as const
 
   return (
     <div className="max-w-6xl mx-auto py-10 px-6">
@@ -236,7 +236,7 @@ export default function AdminPage() {
               borderBottom: tab === t ? '2px solid var(--refi-teal)' : '2px solid transparent',
             }}
           >
-            {t === 'store' ? 'APP STORE' : t === 'reviews' ? 'REVIEWS' : t === 'wallets' ? 'WALLETS' : t === 'providers' ? 'AI PROVIDERS' : t.toUpperCase()}
+            {t === 'store' ? 'APP STORE' : t === 'reviews' ? 'REVIEWS' : t === 'wallets' ? 'WALLETS' : t === 'networks' ? 'NETWORKS' : t === 'providers' ? 'AI PROVIDERS' : t.toUpperCase()}
           </button>
         ))}
       </div>
@@ -568,8 +568,17 @@ export default function AdminPage() {
       {/* AI Model Providers */}
       {tab === 'providers' && <ModelProviderPanel headers={headers} />}
 
-      {/* Wallet Provider Management */}
-      {tab === 'wallets' && <WalletProviderPanel />}
+      {/* GROOT Wallet + Pending Actions + Wallet Provider Management */}
+      {tab === 'wallets' && (
+        <div className="space-y-6">
+          <GrootWalletPanel />
+          <PendingActionsPanel />
+          <WalletProviderPanel />
+        </div>
+      )}
+
+      {/* Network Management */}
+      {tab === 'networks' && <NetworksPanel />}
 
       {/* App Store Management */}
       {tab === 'store' && (
@@ -762,6 +771,301 @@ export default function AdminPage() {
 
 
 /* ─── Wallet Provider Configuration Panel ─── */
+function NetworksPanel() {
+  const [chains, setChains] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showAdd, setShowAdd] = useState(false)
+  const [importId, setImportId] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const headers: any = { 'Content-Type': 'application/json' }
+  const token = typeof window !== 'undefined' ? localStorage.getItem('refinet_token') : null
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const fetchChains = async () => {
+    try {
+      const resp = await fetch(`${API_URL}/admin/chains`, { headers })
+      if (resp.ok) setChains(await resp.json())
+    } catch {}
+    setLoading(false)
+  }
+
+  useEffect(() => { fetchChains() }, [])
+
+  const importFromChainlist = async () => {
+    const chainId = parseInt(importId)
+    if (!chainId || isNaN(chainId)) { setMsg('Enter a valid chain ID (number)'); return }
+    setImporting(true); setMsg('')
+    try {
+      const resp = await fetch(`${API_URL}/admin/chains/import`, {
+        method: 'POST', headers, body: JSON.stringify({ chain_id: chainId })
+      })
+      const data = await resp.json()
+      if (!resp.ok) { setMsg(data.detail || 'Import failed'); setImporting(false); return }
+      setMsg(`Imported: ${data.name} (${data.short_name})`)
+      setImportId('')
+      fetchChains()
+    } catch (e: any) { setMsg(e.message) }
+    setImporting(false)
+  }
+
+  const toggleChain = async (chainId: number, active: boolean) => {
+    await fetch(`${API_URL}/admin/chains/${chainId}`, {
+      method: 'PUT', headers, body: JSON.stringify({ is_active: active })
+    })
+    fetchChains()
+  }
+
+  return (
+    <div className="card p-6" style={{ border: '1px solid var(--border-subtle)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h3 style={{ fontWeight: 700, fontSize: 16 }}>EVM Networks ({chains.length})</h3>
+        <button onClick={() => setShowAdd(!showAdd)}
+          style={{ background: '#FF6B00', color: 'white', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+          + Add Network
+        </button>
+      </div>
+
+      {showAdd && (
+        <div style={{ marginBottom: 16, padding: 16, border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
+          <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Import from Chainlist.org</h4>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+            Enter a chain ID to auto-import network config (RPC, explorer, currency).
+            Find chain IDs at <a href="https://chainlist.org" target="_blank" rel="noopener noreferrer" style={{ color: '#FF6B00' }}>chainlist.org</a>
+          </p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input value={importId} onChange={e => setImportId(e.target.value)} placeholder="Chain ID (e.g., 43114 for Avalanche)"
+              style={{ flex: 1, background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)', borderRadius: 6, padding: '6px 10px', fontSize: 12 }} />
+            <button onClick={importFromChainlist} disabled={importing}
+              style={{ background: '#FF6B00', color: 'white', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', opacity: importing ? 0.5 : 1 }}>
+              {importing ? 'Importing...' : 'Import'}
+            </button>
+          </div>
+          {msg && <p style={{ fontSize: 11, color: msg.includes('Imported') ? '#10B981' : '#EF4444', marginTop: 6 }}>{msg}</p>}
+        </div>
+      )}
+
+      {loading && <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading...</p>}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        {chains.map((c: any) => (
+          <div key={c.chain_id} style={{
+            padding: 12, borderRadius: 8, border: '1px solid var(--border-subtle)',
+            opacity: c.is_active ? 1 : 0.5,
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>
+                {c.name}
+                {c.is_testnet && <span style={{ fontSize: 10, color: '#F59E0B', marginLeft: 6 }}>TESTNET</span>}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+                ID: {c.chain_id} | {c.short_name} | {c.currency}
+              </div>
+            </div>
+            <button onClick={() => toggleChain(c.chain_id, !c.is_active)}
+              style={{
+                fontSize: 10, padding: '3px 8px', borderRadius: 4, border: 'none', cursor: 'pointer',
+                background: c.is_active ? '#10B98120' : '#EF444420',
+                color: c.is_active ? '#10B981' : '#EF4444',
+                fontWeight: 600,
+              }}>
+              {c.is_active ? 'Active' : 'Inactive'}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function GrootWalletPanel() {
+  const [wallet, setWallet] = useState<any>(null)
+  const [balances, setBalances] = useState<Record<string, any>>({})
+  const [transactions, setTransactions] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [balanceChain, setBalanceChain] = useState('base')
+
+  const headers: any = { 'Content-Type': 'application/json' }
+  const token = typeof window !== 'undefined' ? localStorage.getItem('refinet_token') : null
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  useEffect(() => {
+    const fetchWallet = async () => {
+      try {
+        const resp = await fetch(`${API_URL}/admin/wallet`, { headers })
+        if (resp.ok) setWallet(await resp.json())
+      } catch {}
+      setLoading(false)
+    }
+    fetchWallet()
+  }, [])
+
+  const fetchBalance = async (chain: string) => {
+    try {
+      const resp = await fetch(`${API_URL}/admin/wallet/balance/${chain}`, { headers })
+      if (resp.ok) {
+        const data = await resp.json()
+        setBalances(prev => ({ ...prev, [chain]: data }))
+      }
+    } catch {}
+  }
+
+  const fetchTransactions = async () => {
+    try {
+      const resp = await fetch(`${API_URL}/admin/wallet/transactions?limit=20`, { headers })
+      if (resp.ok) setTransactions(await resp.json())
+    } catch {}
+  }
+
+  if (loading) return <div className="card p-6"><p style={{ color: 'var(--text-muted)' }}>Loading GROOT wallet...</p></div>
+  if (!wallet) return (
+    <div className="card p-6" style={{ border: '1px solid var(--border-subtle)' }}>
+      <h3 style={{ fontWeight: 700, fontSize: 16, marginBottom: 8 }}>GROOT Wallet</h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+        GROOT wallet not initialized. Run <code style={{ background: 'var(--bg-subtle)', padding: '2px 6px', borderRadius: 4 }}>python scripts/init_groot_wallet.py</code> to create it.
+      </p>
+    </div>
+  )
+
+  return (
+    <div className="card p-6" style={{ border: '1px solid var(--border-subtle)' }}>
+      <h3 style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>GROOT Wallet (The Wizard)</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 13 }}>
+        <div><span style={{ color: 'var(--text-muted)' }}>Address:</span> <code style={{ color: '#FF6B00' }}>{wallet.address}</code></div>
+        <div><span style={{ color: 'var(--text-muted)' }}>Chain ID:</span> {wallet.chain_id}</div>
+        <div><span style={{ color: 'var(--text-muted)' }}>Threshold:</span> {wallet.threshold}-of-{wallet.share_count} SSS</div>
+        <div><span style={{ color: 'var(--text-muted)' }}>Created:</span> {wallet.created_at?.slice(0, 10)}</div>
+      </div>
+
+      <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
+        <select value={balanceChain} onChange={e => setBalanceChain(e.target.value)}
+          style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)', borderRadius: 6, padding: '4px 8px', fontSize: 12 }}>
+          {['base', 'ethereum', 'sepolia', 'polygon', 'arbitrum', 'optimism'].map(c =>
+            <option key={c} value={c}>{c}</option>
+          )}
+        </select>
+        <button onClick={() => fetchBalance(balanceChain)}
+          style={{ background: '#FF6B00', color: 'white', border: 'none', borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}>
+          Check Balance
+        </button>
+        <button onClick={fetchTransactions}
+          style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)', borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}>
+          Load Transactions
+        </button>
+      </div>
+
+      {Object.entries(balances).map(([chain, bal]: [string, any]) => (
+        <div key={chain} style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+          {chain}: <span style={{ color: '#4ade80', fontWeight: 600 }}>{bal.balance_eth} ETH</span>
+        </div>
+      ))}
+
+      {transactions && (
+        <div style={{ marginTop: 12 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
+            Deployments: {transactions.deployments?.length || 0} | Pending Actions: {transactions.pending_actions?.length || 0}
+          </p>
+          {transactions.deployments?.slice(0, 5).map((d: any) => (
+            <div key={d.id} style={{ fontSize: 11, color: 'var(--text-muted)', padding: '2px 0' }}>
+              {d.chain} | {d.contract_address?.slice(0, 14)}... | {d.ownership_status} | {d.created_at?.slice(0, 10)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PendingActionsPanel() {
+  const [actions, setActions] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [note, setNote] = useState('')
+
+  const headers: any = { 'Content-Type': 'application/json' }
+  const token = typeof window !== 'undefined' ? localStorage.getItem('refinet_token') : null
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const fetchActions = async () => {
+    try {
+      const resp = await fetch(`${API_URL}/pipeline/admin/pending-actions?status=pending`, { headers })
+      if (resp.ok) setActions(await resp.json())
+    } catch {}
+    setLoading(false)
+  }
+
+  useEffect(() => { fetchActions() }, [])
+
+  const approve = async (id: string) => {
+    await fetch(`${API_URL}/pipeline/admin/pending-actions/${id}/approve`, {
+      method: 'POST', headers, body: JSON.stringify({ note })
+    })
+    setNote(''); fetchActions()
+  }
+
+  const reject = async (id: string) => {
+    await fetch(`${API_URL}/pipeline/admin/pending-actions/${id}/reject`, {
+      method: 'POST', headers, body: JSON.stringify({ note: note || 'Rejected by admin' })
+    })
+    setNote(''); fetchActions()
+  }
+
+  return (
+    <div className="card p-6" style={{ border: '1px solid var(--border-subtle)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <h3 style={{ fontWeight: 700, fontSize: 16 }}>Pending Actions (Tier 2 Approvals)</h3>
+        <button onClick={fetchActions}
+          style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)', borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}>
+          Refresh
+        </button>
+      </div>
+
+      {loading && <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading...</p>}
+      {!loading && actions.length === 0 && (
+        <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>No pending actions. GROOT is idle.</p>
+      )}
+
+      {actions.map((a: any) => (
+        <div key={a.id} style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, padding: 12, marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>{a.action_type}</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>{a.target_chain}</span>
+              {a.target_address && (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>{a.target_address?.slice(0, 14)}...</span>
+              )}
+            </div>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{a.created_at?.slice(0, 16)}</span>
+          </div>
+
+          {a.payload && (
+            <details style={{ marginTop: 6 }}>
+              <summary style={{ fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>Payload</summary>
+              <pre style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4, background: 'var(--bg-subtle)', padding: 8, borderRadius: 4, overflow: 'auto' }}>
+                {JSON.stringify(a.payload, null, 2)}
+              </pre>
+            </details>
+          )}
+
+          <div style={{ marginTop: 8, display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note (optional)"
+              style={{ flex: 1, background: 'var(--bg-subtle)', border: '1px solid var(--border-subtle)', borderRadius: 6, padding: '4px 8px', fontSize: 11 }} />
+            <button onClick={() => approve(a.id)}
+              style={{ background: '#22c55e', color: 'white', border: 'none', borderRadius: 6, padding: '4px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+              Approve
+            </button>
+            <button onClick={() => reject(a.id)}
+              style={{ background: '#ef4444', color: 'white', border: 'none', borderRadius: 6, padding: '4px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+              Reject
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function WalletProviderPanel() {
   const [config, setConfig] = useState({
     injected: true,

@@ -4,6 +4,97 @@ All notable changes to REFINET Cloud are documented in this file.
 
 ---
 
+## [3.2.0] — 2026-03-20
+
+### Added — GROOT as Sole Wizard
+- GROOT is now the **sole Wizard** — all contract deployments and on-chain actions go through GROOT's SSS-secured wallet
+- `deploy_worker` and `transfer_ownership_worker` rewritten to use `sign_transaction_with_groot_wallet()` exclusively
+- Users never need gas — GROOT deploys on their behalf, then transfers ownership
+- `scripts/init_groot_wallet.py` — one-time wallet initialization with offline share backup
+
+### Added — Master Admin Role
+- New `master_admin` role with exclusive control over GROOT's wallet, Tier 2 approvals, and chain management
+- `_require_master_admin()` gate on all wallet, approval, and deployment endpoints
+- Admin secret header (`X-Admin-Secret`) cannot bypass master_admin — JWT authentication required
+- All admin secret usage audited in `admin_audit_log`
+
+### Added — CAG Three Access Modes
+- **Query** (`cag_query`) — search public SDKs for contract information (autonomous)
+- **Execute** (`cag_execute`) — call view/pure functions on-chain (autonomous, no gas)
+- **Act** (`cag_act`) — request state-changing transactions (creates PendingAction for master_admin approval)
+- CAG context injected as Layer 3.5 in GROOT's 8-layer system prompt
+- Agent engine can invoke `cag_query`, `cag_execute`, `cag_act` as tool actions
+- `POST /explore/cag/execute` and `POST /explore/cag/act` API endpoints
+
+### Added — Dynamic Chain Registry
+- `SupportedChain` model — database-backed chain configuration replaces 7+ hardcoded dicts
+- `ChainRegistry` service — cached, single source of truth with 60s TTL
+- `POST /admin/chains/import` — import any EVM chain from chainlist.org by chain_id
+- `GET/POST/PUT/DELETE /admin/chains` — full CRUD for master_admin
+- 6 default chains seeded on startup (Ethereum, Polygon, Arbitrum, Optimism, Base, Sepolia)
+- All services (`wizard_workers`, `chain_listener`, `explore`) now use registry with hardcoded fallback
+
+### Added — Multi-Chain Contract Deployments
+- `ContractDeployment` model — maps one contract to N chain+address pairs
+- ABIs are now chain-agnostic: `data/contracts/abis/USDC.json` with `"deployments": [{chain_id, address}, ...]`
+- Flat folder structure: `data/contracts/abis/` (no chain subfolders)
+- `scripts/import_contracts.py` handles both legacy single-chain and new multi-chain format
+- `contract_brain.py` resolves addresses via `ContractDeployment` table for cross-chain lookups
+
+### Added — Wizard Pipeline (Full 8-Stage DAG)
+- New `wizard` pipeline template: compile → test → parse → RBAC → deploy → reparse → frontend → appstore
+- **Parallel execution**: frontend generation runs alongside RBAC/deploy (both depend on parse)
+- `parse_worker` — wraps abi_parser + sdk_generator as pipeline step
+- `frontend_worker` — generates 3-page React DApp from SDK
+- `appstore_worker` — submits to App Store review pipeline
+- `POST /pipeline/start` endpoint for full source-to-DApp pipeline
+- Hardhat compilation support with solc fallback
+
+### Added — Frontend Pages
+- `/pipeline` — start wizard pipeline, monitor DAG steps with live refresh, cancel
+- `/deployments` — view GROOT-deployed contracts, transfer ownership, explorer links
+- `/dapp` — browse templates, build DApps, validate, download ZIP
+- Admin "Networks" tab — list chains, toggle status, import from chainlist.org
+- Admin "GROOT Wallet" panel — address, balance, transactions
+- Admin "Pending Actions" panel — approve/reject Tier 2 actions
+- Sidebar navigation updated with Wizard, Deployments, DApp Factory links
+- All chain selectors now dynamic (fetch from `/explore/chains` API)
+
+### Added — Worker Endpoints
+- `POST /workers/hardhat/compile`, `/hardhat/test`, `/parse` — Tier 1 (any user)
+- `POST /workers/deploy`, `/verify`, `/rbac/check` — Tier 2 (master_admin only)
+- `POST /workers/frontend/generate` — Tier 1 (any user)
+
+### Added — Block Explorer Integration
+- `GET /explore/fetch-abi?address=...&chain=...` — fetch verified ABI from Etherscan/Basescan/etc.
+- Frontend "Import from Explorer" button on repo page
+- Supports 6 explorer APIs (Etherscan, Basescan, Polygonscan, Arbiscan, Optimistic Etherscan, Sepolia)
+
+### Added — Performance Indexes
+- Migration 015: 15+ indexes on contract_repos, contract_functions, knowledge_documents
+- FTS5 virtual tables for contract name/description/tags search
+- FTS5 virtual table for function_name/signature search
+- `search_public_sdks` optimized from N+1 queries to single JOIN (1.4ms avg at 200 contracts)
+
+### Added — Contract Testing UI
+- "Test" button on view/pure functions in repo page
+- Inline args input + Call button → calls `cag_execute` → shows result
+- Gas balance check before GROOT deployment attempts
+
+### Fixed
+- `sdk_definitions.user_id` NOT NULL constraint in parse_worker
+- `assemble_dapp` parameter names (template_name, contract_name)
+- `generate_dapp_zip` signature and return type
+- `appstore_worker` uses `publish_app` instead of nonexistent `create_listing`
+- SDK field name mismatch (`mutability` vs `state_mutability`) in cag_execute/cag_act
+- solc ABI parsing handles both list and string ABI formats
+- All 12 missing model exports added to `__init__.py`
+- Duplicate unreachable return statement in admin `_require_master_admin`
+- Token budget includes "cag" layer (200 tokens, flexible)
+- `sources` list in agent_soul safely initialized
+
+---
+
 ## [3.1.0] — 2026-03-19
 
 ### Added — Wizard Pipeline (DAG Orchestrator)

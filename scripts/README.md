@@ -65,6 +65,15 @@ source venv/bin/activate  # Required for Python scripts
 | `ops/db_stats.py` | Database table sizes and record counts | `python3 scripts/ops/db_stats.py` |
 | `ops/health_report.py` | System health report (BitNet, DB, SMTP, scheduler) | `python3 scripts/ops/health_report.py` |
 
+## GROOT Wizard
+
+| Script | Purpose | Usage |
+|---|---|---|
+| `init_groot_wallet.py` | Initialize GROOT's SSS wallet (one-time, prints offline shares) | `python3 scripts/init_groot_wallet.py` |
+| `import_contracts.py` | Bulk-import contract ABIs into GROOT's brain (CAG) | `python3 scripts/import_contracts.py` |
+| `import_contracts.py --fetch` | Fetch ABI from block explorer and save to file | `python3 scripts/import_contracts.py --fetch 0x... --chain ethereum` |
+| `setup_hardhat.sh` | Setup Hardhat base environment for compilation workers | `bash scripts/setup_hardhat.sh` |
+
 ## Seed (Development)
 
 | Script | Purpose | Usage |

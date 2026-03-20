@@ -17,14 +17,25 @@ from api.services.event_bus import EventBus
 
 logger = logging.getLogger("refinet.chain")
 
-# Default RPC endpoints (free public endpoints, rate-limited)
-DEFAULT_RPCS = {
-    "ethereum": "https://eth.llamarpc.com",
-    "base": "https://mainnet.base.org",
-    "arbitrum": "https://arb1.arbitrum.io/rpc",
-    "polygon": "https://polygon-rpc.com",
+# Fallback RPCs (used only if chain_registry DB is unavailable)
+_FALLBACK_RPCS = {
+    "ethereum": "https://eth.llamarpc.com", "base": "https://mainnet.base.org",
+    "arbitrum": "https://arb1.arbitrum.io/rpc", "polygon": "https://polygon-rpc.com",
     "sepolia": "https://rpc.sepolia.org",
 }
+DEFAULT_RPCS = _FALLBACK_RPCS  # Legacy alias
+
+
+def _get_rpc_for_chain(chain: str) -> str:
+    """Get RPC from chain registry (DB) with fallback to hardcoded."""
+    try:
+        from api.services.chain_registry import ChainRegistry
+        url = ChainRegistry.get().get_rpc(chain)
+        if url:
+            return url
+    except Exception:
+        pass
+    return _FALLBACK_RPCS.get(chain, "")
 
 
 # ── CRUD ─────────────────────────────────────────────────────────
@@ -120,7 +131,7 @@ async def poll_watcher(db: Session, watcher: ChainWatcher) -> int:
     Uses eth_getLogs to fetch logs from last_processed_block to latest.
     Returns the number of new events detected.
     """
-    rpc_url = watcher.rpc_url or DEFAULT_RPCS.get(watcher.chain)
+    rpc_url = watcher.rpc_url or _get_rpc_for_chain(watcher.chain)
     if not rpc_url:
         logger.warning(f"No RPC URL for chain {watcher.chain}")
         return 0
