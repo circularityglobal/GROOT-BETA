@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-REFINET Cloud is a sovereign AI platform with 321 API endpoints, 80 database tables (11 model files), and 24 frontend pages. GROOT is the sole Wizard — the only entity with an on-chain wallet, deployed via Shamir Secret Sharing (3-of-5 threshold).
+REFINET Cloud is a sovereign AI platform with 317 API endpoints, 75 database tables (11 model files), and 23 frontend pages. GROOT is the sole Wizard — the only entity with an on-chain wallet, deployed via Shamir Secret Sharing (3-of-5 threshold).
 
 **Read these files for full context:**
 - @GROOT.md — Master architecture, constraints, subsystems
@@ -46,7 +46,7 @@ api/
 ├── routes/        # FastAPI route handlers (29 files, 302+ endpoints)
 ├── services/      # Business logic (70+ modules)
 ├── schemas/       # Pydantic request/response models
-├── middleware/     # CORS, rate limiting, logging, request ID
+├── middleware/     # CORS, rate limiting, logging, request ID, response cache
 └── main.py        # App factory with lifespan, router registration
 
 frontend/

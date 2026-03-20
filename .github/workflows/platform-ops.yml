@@ -1,0 +1,47 @@
+name: REFINET Platform Ops — Health Monitoring
+# Estimated: ~150 min/month (30 runs x 5 min)
+
+on:
+  schedule:
+    # Daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Task to run (health-check, full-audit, cleanup)'
+        required: false
+        default: 'health-check'
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install httpx
+
+      - name: Run health check
+        run: |
+          python skills/refinet-platform-ops/scripts/health_check.py --email --always
+        env:
+          REFINET_API_BASE: ${{ secrets.REFINET_API_BASE }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          BITNET_HOST: ${{ secrets.BITNET_HOST }}
+          DATABASE_PATH: ${{ secrets.DATABASE_PATH }}

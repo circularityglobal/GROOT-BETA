@@ -1,0 +1,52 @@
+name: REFINET Repo Migrator — Contract Migration
+# Estimated: ~0 min/month (on-demand only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      github_url:
+        description: 'GitHub repo URL to migrate'
+        required: true
+      user_id:
+        description: 'User ID for private repo import'
+        required: false
+        default: 'admin'
+      ecosystem:
+        description: 'Filter by ecosystem (optional)'
+        required: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: |
+          pip install httpx
+          npm install -g solc
+
+      - name: Run migration
+        run: |
+          ARGS="${{ github.event.inputs.github_url }}"
+          [ -n "${{ github.event.inputs.ecosystem }}" ] && ARGS="$ARGS --ecosystem ${{ github.event.inputs.ecosystem }}"
+          python skills/refinet-repo-migrator/scripts/repo_migrate.py $ARGS --email
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REFINET_API_BASE: ${{ secrets.REFINET_API_BASE }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}

@@ -6,6 +6,7 @@ Supports streaming, safety settings, grounding with Google Search.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import httpx
 import logging
@@ -129,20 +130,26 @@ class GeminiProvider(BaseProvider):
         top_p: float = 1.0,
         grounding: bool = False,
     ) -> InferenceResult:
-        # Check rate limit
+        # Check rate limit with graceful backoff
         from api.services.providers.gemini_rate_limiter import GeminiRateLimiter
         allowed, retry_after = GeminiRateLimiter.get().acquire(model)
         if not allowed:
-            msg = "Gemini rate limit exceeded."
-            if retry_after:
-                msg += f" Try again in {retry_after:.1f}s."
-            else:
-                msg += " Daily quota exhausted."
-            return InferenceResult(
-                content=msg, model=model,
-                provider=self.provider_type.value,
-                finish_reason="rate_limit",
-            )
+            if retry_after and retry_after <= 10.0:
+                # RPM exhausted but daily budget remains — wait and retry once
+                logger.info("Gemini RPM limit hit, backing off %.1fs", retry_after)
+                await asyncio.sleep(retry_after)
+                allowed, retry_after = GeminiRateLimiter.get().acquire(model)
+            if not allowed:
+                msg = "Gemini rate limit exceeded."
+                if retry_after:
+                    msg += f" Try again in {retry_after:.1f}s."
+                else:
+                    msg += " Daily quota exhausted."
+                return InferenceResult(
+                    content=msg, model=model,
+                    provider=self.provider_type.value,
+                    finish_reason="rate_limit",
+                )
 
         system_instruction, contents = _openai_messages_to_gemini(messages)
 
@@ -240,15 +247,20 @@ class GeminiProvider(BaseProvider):
         grounding: bool = False,
         result: Optional[StreamResult] = None,
     ) -> AsyncGenerator[str, None]:
-        # Check rate limit
+        # Check rate limit with graceful backoff
         from api.services.providers.gemini_rate_limiter import GeminiRateLimiter
         allowed, retry_after = GeminiRateLimiter.get().acquire(model)
         if not allowed:
-            msg = "Gemini rate limit exceeded."
-            if retry_after:
-                msg += f" Try again in {retry_after:.1f}s."
-            yield msg
-            return
+            if retry_after and retry_after <= 10.0:
+                logger.info("Gemini RPM limit hit (stream), backing off %.1fs", retry_after)
+                await asyncio.sleep(retry_after)
+                allowed, retry_after = GeminiRateLimiter.get().acquire(model)
+            if not allowed:
+                msg = "Gemini rate limit exceeded."
+                if retry_after:
+                    msg += f" Try again in {retry_after:.1f}s."
+                yield msg
+                return
 
         system_instruction, contents = _openai_messages_to_gemini(messages)
 

@@ -231,15 +231,24 @@ def send_email(subject, html, text):
 
 
 def main():
-    db = get_db()
-    wallet_arg = None
-    for i, a in enumerate(sys.argv):
-        if a == "--wallet" and i+1 < len(sys.argv): wallet_arg = sys.argv[i+1]
+    import argparse
+    parser = argparse.ArgumentParser(description="REFINET Security Sentinel — Defense Scanner")
+    parser.add_argument("--auth", action="store_true", help="Run auth anomaly detection only")
+    parser.add_argument("--rates", action="store_true", help="Run rate limit analysis only")
+    parser.add_argument("--tls", "--tls-only", action="store_true", help="Check TLS certificate expiry only")
+    parser.add_argument("--gate", "--gate-only", action="store_true", help="Validate BYOK security gate only")
+    parser.add_argument("--full", action="store_true", help="Run full security audit")
+    parser.add_argument("--wallet", type=str, default=None, help="Analyze a specific wallet address")
+    parser.add_argument("--email", action="store_true", help="Send email report to admin")
+    args = parser.parse_args()
 
-    if "--tls-only" in sys.argv:
+    db = get_db()
+    wallet_arg = args.wallet
+
+    if args.tls:
         for t in [check_tls(h) for h in TLS_HOSTNAMES]: print(json.dumps(t, indent=2))
         sys.exit(0)
-    if "--gate-only" in sys.argv:
+    if args.gate:
         g = validate_gate(); print(json.dumps(g, indent=2)); sys.exit(0 if g["all_passed"] else 1)
 
     anomalies = run_anomaly_detection(db)
@@ -251,7 +260,7 @@ def main():
     text, html = format_report(anomalies, rates, tls, wallets, gate)
     print(text)
 
-    if "--email" in sys.argv:
+    if args.email:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         th = sum(1 for a in anomalies if a["severity"] in ("CRITICAL","HIGH"))
         send_email(f"[REFINET SECURITY] {'THREATS' if th else 'Clear'} — {ts}", html, text)

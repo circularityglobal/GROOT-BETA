@@ -1,0 +1,65 @@
+name: REFINET Security Sentinel — Defense Monitoring
+# Estimated: ~175 min/month (35 runs x 5 min)
+
+on:
+  schedule:
+    # Daily at 05:00 UTC — security briefing
+    - cron: '0 5 * * *'
+    # Weekly Sunday 04:00 UTC — TLS + gate + forensics
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Task to run (auth-scan, rate-analysis, full-audit, tls-check, gate-validation)'
+        required: false
+        default: 'full-audit'
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install httpx
+
+      - name: Run security scan
+        run: |
+          TASK="${{ github.event.inputs.task || 'full-audit' }}"
+          case "$TASK" in
+            auth-scan)
+              python skills/refinet-security-sentinel/scripts/security_scan.py --auth --email
+              ;;
+            rate-analysis)
+              python skills/refinet-security-sentinel/scripts/security_scan.py --rates --email
+              ;;
+            tls-check)
+              python skills/refinet-security-sentinel/scripts/security_scan.py --tls --email
+              ;;
+            gate-validation)
+              python skills/refinet-security-sentinel/scripts/security_scan.py --gate --email
+              ;;
+            full-audit|*)
+              python skills/refinet-security-sentinel/scripts/security_scan.py --full --email
+              ;;
+          esac
+        env:
+          REFINET_API_BASE: ${{ secrets.REFINET_API_BASE }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          DATABASE_PATH: ${{ secrets.DATABASE_PATH }}

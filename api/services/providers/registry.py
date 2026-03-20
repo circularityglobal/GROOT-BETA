@@ -7,7 +7,8 @@ Handles model-to-provider routing and fallback chain resolution.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Optional
 
 from api.services.providers.base import (
@@ -17,6 +18,59 @@ from api.services.providers.base import (
 )
 
 logger = logging.getLogger("refinet.providers.registry")
+
+
+@dataclass
+class CircuitBreaker:
+    """
+    In-memory circuit breaker for provider health.
+    States: closed (normal) → open (skip) → half_open (probe one request).
+    """
+    failure_count: int = 0
+    failure_threshold: int = 3
+    last_failure_time: float = 0.0
+    open_duration: float = 60.0       # seconds before half-open retry
+    max_open_duration: float = 300.0   # cap at 5 minutes
+    state: str = "closed"              # closed | open | half_open
+
+    def record_failure(self):
+        self.failure_count += 1
+        self.last_failure_time = time.monotonic()
+        if self.failure_count >= self.failure_threshold:
+            self.state = "open"
+            logger.warning(
+                "Circuit breaker OPEN after %d failures (cooldown %.0fs)",
+                self.failure_count, self.open_duration,
+            )
+
+    def record_success(self):
+        if self.state == "half_open":
+            logger.info("Circuit breaker CLOSED — provider recovered")
+        self.failure_count = 0
+        self.open_duration = 60.0
+        self.state = "closed"
+
+    def is_available(self) -> bool:
+        if self.state == "closed":
+            return True
+        if self.state == "open":
+            elapsed = time.monotonic() - self.last_failure_time
+            if elapsed >= self.open_duration:
+                self.state = "half_open"
+                logger.info("Circuit breaker HALF_OPEN — allowing probe")
+                return True
+            return False
+        # half_open: allow one probe
+        return True
+
+    def on_probe_failure(self):
+        """Called when a half-open probe fails — reopen with exponential backoff."""
+        self.state = "open"
+        self.open_duration = min(self.open_duration * 2, self.max_open_duration)
+        self.last_failure_time = time.monotonic()
+        logger.warning(
+            "Circuit breaker RE-OPENED (backoff %.0fs)", self.open_duration
+        )
 
 
 @dataclass
@@ -59,6 +113,7 @@ class ProviderRegistry:
         self._providers: dict[ProviderType, BaseProvider] = {}
         self._model_map: dict[str, ProviderType] = {}
         self._health_cache: dict[ProviderType, ProviderHealth] = {}
+        self._circuit_breakers: dict[ProviderType, CircuitBreaker] = {}
         self._fallback_chain: list[ProviderType] = [
             ProviderType.BITNET,
             ProviderType.GEMINI,
@@ -178,6 +233,14 @@ class ProviderRegistry:
 
     def update_health(self, provider_type: ProviderType, health: ProviderHealth):
         self._health_cache[provider_type] = health
+        cb = self._circuit_breakers.setdefault(provider_type, CircuitBreaker())
+        if health.is_healthy:
+            cb.record_success()
+        else:
+            if cb.state == "half_open":
+                cb.on_probe_failure()
+            else:
+                cb.record_failure()
 
     def get_health(self, provider_type: ProviderType) -> Optional[ProviderHealth]:
         return self._health_cache.get(provider_type)
@@ -186,6 +249,11 @@ class ProviderRegistry:
         return list(self._providers.keys())
 
     def _is_healthy(self, provider_type: ProviderType) -> bool:
+        # Circuit breaker check — skip network call if breaker is open
+        cb = self._circuit_breakers.get(provider_type)
+        if cb and not cb.is_available():
+            return False
+
         cached = self._health_cache.get(provider_type)
         if cached is None:
             # No health data yet — assume healthy (first request will reveal)

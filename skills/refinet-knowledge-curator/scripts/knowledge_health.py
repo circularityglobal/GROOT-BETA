@@ -233,6 +233,12 @@ def send_email(subject, html_body, text_body):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="REFINET Knowledge Base Health Check")
+    parser.add_argument("--repair", action="store_true", help="Prune stale chunks and re-embed orphans")
+    parser.add_argument("--email", action="store_true", help="Send email report to admin")
+    args = parser.parse_args()
+
     db = get_db()
     stats = get_stats(db)
     orphans = find_orphans(db)
@@ -240,7 +246,7 @@ def main():
     unsynced = find_unsynced_cag(db)
     pruned = 0
 
-    if "--repair" in sys.argv:
+    if args.repair:
         if stale:
             pruned = prune_stale(db, stale)
             print(f"[knowledge] Pruned {pruned} stale chunks")
@@ -263,7 +269,7 @@ def main():
     text_report, html_report = format_report(stats, orphans, stale, unsynced, pruned)
     print(text_report)
 
-    if "--email" in sys.argv:
+    if args.email:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         status_str = "Healthy" if len(orphans) == 0 and len(stale) == 0 else "Issues Detected"
         send_email(

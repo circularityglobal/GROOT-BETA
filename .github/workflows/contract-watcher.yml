@@ -1,4 +1,5 @@
 name: REFINET Contract Watcher — Autonomous On-Chain Intelligence
+# Estimated: ~175 min/month (35 runs x 5 min)
 
 on:
   schedule:
@@ -12,6 +13,10 @@ on:
         description: 'Contract watcher task'
         required: false
         default: 'Scan all unanalyzed ABIs and email security report'
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
 
 jobs:
   abi-scan:

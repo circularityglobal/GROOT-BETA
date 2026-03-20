@@ -32,7 +32,7 @@ The repository contains a complete sovereign AI platform with 13 subsystems:
 
 **Web3 Layer**: GitHub-style smart contract registry with ABI upload/parsing/verification, GROOT Brain per-user contract namespace, DApp Factory with 5 templates, App Store for publishing DApps/agents/tools, chain listener for on-chain event monitoring across 6 EVM chains, multi-chain wallet identity with ENS resolution and Shamir Secret Sharing custodial wallets, wallet-to-wallet encrypted messaging with SMTP bridge.
 
-**Infrastructure Layer**: FastAPI 0.115.x + SQLAlchemy 2.0 + SQLite WAL (dual DB), Next.js 14 + React 18 frontend, 6-protocol MCP gateway (REST + GraphQL + gRPC + SOAP + WebSocket + Webhooks), 210+ endpoints across 22 route groups, SIWE + Argon2id + TOTP authentication, AES-256-GCM encryption, Let's Encrypt TLS, 60-second heartbeat protocol.
+**Infrastructure Layer**: FastAPI 0.115.x + SQLAlchemy 2.0 + SQLite WAL (dual DB), Next.js 14 + React 18 frontend, 6-protocol MCP gateway (REST + GraphQL + gRPC + SOAP + WebSocket + Webhooks), 317 endpoints across 27 route groups, SIWE + Argon2id + TOTP authentication, AES-256-GCM encryption, Let's Encrypt TLS, 60-second heartbeat protocol.
 
 ### 2.2 What Was Missing
 
@@ -41,7 +41,7 @@ Despite the comprehensive architecture, the platform's agent archetypes were def
 - No automated health monitoring — subsystem failures required manual detection
 - No knowledge base maintenance — orphaned embeddings, stale chunks, and ingestion failures went undetected
 - No on-chain intelligence — the chain listener captured raw events but nothing interpreted them
-- No security automation — the 210+ endpoint attack surface had no continuous defense
+- No security automation — the 317-endpoint attack surface had no continuous defense
 - No contract migration pipeline — users had to manually extract, compile, and upload ABIs
 - No admin alerting — the self-hosted SMTP bridge existed but nothing generated alerts
 - No LLM execution pipeline — no mechanism to run agents through the zero-cost inference chain
@@ -292,14 +292,15 @@ configs/
 └── repo-migrator.yml                  (1 job)
 ```
 
-### 8.4 Server Cron Installers (4 files)
+### 8.4 Server Cron Installers (5 files)
 
 ```
 scripts/
 ├── install_platform_ops_cron.sh
 ├── install_knowledge_curator_cron.sh
 ├── install_contract_watcher_cron.sh
-└── install_security_sentinel_cron.sh
+├── install_security_sentinel_cron.sh
+└── install_repo_migrator_cron.sh
 ```
 
 ### 8.5 Documentation (5 files)
@@ -324,6 +325,15 @@ docs/
 
 - `memory/` directory structure (working/, episodic/, semantic/, procedural/) with .gitkeep files
 - `.gitignore` entries for runtime memory data
+
+### 8.8 Performance & Reliability (Post-Audit)
+
+- `api/middleware/response_cache.py` — TTL-based LRU response cache for GET endpoints (X-Cache headers)
+- `api/services/providers/registry.py` — Circuit breaker for provider fallback (3-failure threshold, exponential backoff)
+- `api/services/embedding.py` — LRU embedding cache (512 entries, ~750KB) for duplicate query avoidance
+- `api/services/agent_engine.py` — Token-bucket delegation rate limiter (10/min) to prevent cascading bursts
+- `api/services/providers/gemini.py` — Graceful backoff on Gemini RPM rate limits (auto-retry ≤10s)
+- `scripts/backup_databases.sh` — Automated SQLite backup with gzip compression and 7-day retention
 
 ---
 
@@ -370,7 +380,7 @@ The integration of 5 autonomous agent skills transforms REFINET Cloud from a man
 
 Every capability runs at zero recurring cost on free infrastructure using exclusively open-source software. The architecture enforces this constraint at every layer — from the LLM fallback chain that cascades through free inference providers, to the self-hosted SMTP that sends alerts without a mail service, to the public RPC endpoints that monitor 6 EVM chains without API keys.
 
-The 5,822 lines of skill content, combined with the platform's existing 210+ endpoint API, 6-phase cognitive loop, and 4-tier memory system, create what is effectively a sovereign AI operating system that runs itself.
+The 5,822 lines of skill content, combined with the platform's existing 317-endpoint API, 6-phase cognitive loop, and 4-tier memory system, create what is effectively a sovereign AI operating system that runs itself.
 
 ---
 

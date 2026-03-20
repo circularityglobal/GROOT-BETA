@@ -234,6 +234,8 @@ def create_app() -> FastAPI:
 
     # ── Middleware (order matters — last added = first executed) ────
     app.add_middleware(LoggingMiddleware)
+    from api.middleware.response_cache import ResponseCacheMiddleware
+    app.add_middleware(ResponseCacheMiddleware)
     app.add_middleware(RequestSizeMiddleware)
     from api.middleware.request_id import RequestIDMiddleware
     app.add_middleware(RequestIDMiddleware)

@@ -1,0 +1,21 @@
+# REFINET Repo Migrator — Contract Migration Schedule
+# This is primarily a user-triggered workflow (user provides GitHub URL).
+# Cron handles maintenance only.
+
+schedules:
+  # Daily at 07:00 UTC — retry failed migrations
+  - name: retry-failed
+    cron: "0 7 * * *"
+    agent: repo-migrator
+    task: >
+      Check migration_jobs table for status 'failed' or 'partial'.
+      Retry compilation/parsing for transient failures.
+      Email admin summary of retry results.
+
+  # Weekly Monday 07:00 UTC — migration stats digest
+  - name: weekly-stats
+    cron: "0 7 * * 1"
+    agent: repo-migrator
+    task: >
+      Compile weekly stats: repos imported, contracts parsed, ABIs generated,
+      SDKs created, ecosystems represented, failure rate. Email admin.

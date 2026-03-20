@@ -9,6 +9,8 @@ cognitive loop using BitNet inference and MCP tools, and stores the results.
 import asyncio
 import json
 import logging
+import time
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -665,6 +667,32 @@ Respond with JSON:
         self._cancelled = True
 
 
+# ── Delegation Rate Limiter ──────────────────────────────────────
+
+class _DelegationBucket:
+    """Token-bucket rate limiter for agent delegations (10/minute)."""
+
+    def __init__(self, max_tokens: int = 10, refill_rate: float = 10.0 / 60.0):
+        self._max_tokens = max_tokens
+        self._refill_rate = refill_rate  # tokens per second
+        self._tokens = float(max_tokens)
+        self._last_refill = time.monotonic()
+        self._lock = threading.Lock()
+
+    def acquire(self) -> bool:
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_refill
+            self._tokens = min(self._max_tokens, self._tokens + elapsed * self._refill_rate)
+            self._last_refill = now
+            if self._tokens >= 1.0:
+                self._tokens -= 1.0
+                return True
+            return False
+
+
+_delegation_limiter = _DelegationBucket()
+
 # ── Delegation ───────────────────────────────────────────────────
 
 async def delegate_task(
@@ -678,7 +706,14 @@ async def delegate_task(
     """
     Delegate a subtask from one agent to another.
     Checks delegation policy on the target agent's soul.
+    Rate-limited to 10 delegations per minute to prevent cascading bursts.
     """
+    # Rate limit check
+    if not _delegation_limiter.acquire():
+        logger.warning("Delegation rate limit exceeded — rejecting delegation from %s to %s",
+                        source_agent_id, target_agent_id)
+        return None
+
     from api.services.agent_soul import get_soul
 
     # Verify both agents belong to the same user

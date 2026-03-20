@@ -1,0 +1,48 @@
+# REFINET Platform Ops — Autonomous Health Monitoring Schedule
+# Platform-ops is the orchestrator of the heartbeat system.
+# It monitors all subsystems and coordinates other agents.
+
+schedules:
+  # Every 5 minutes — BitNet inference health check
+  - name: inference-check
+    interval: 5m
+    agent: platform-ops
+    task: >
+      Check BitNet inference server health (GET /health).
+      Log latency. Alert admin if server is down or latency exceeds 30s.
+
+  # Every 15 minutes — security audit log review
+  - name: security-audit
+    interval: 15m
+    agent: platform-ops
+    task: >
+      Review recent audit log entries for anomalies.
+      Check for failed auth attempts, rate limit hits, suspicious patterns.
+      Delegate to security-sentinel if CRITICAL/HIGH patterns found.
+
+  # Every hour — memory and disk cleanup
+  - name: memory-cleanup
+    interval: 1h
+    agent: platform-ops
+    task: >
+      Check working memory for stale agent state files.
+      Prune episodic logs older than 30 days.
+      Check disk usage and warn if above 80%.
+
+  # Daily at 06:00 UTC — platform health summary
+  - name: daily-summary
+    cron: "0 6 * * *"
+    agent: platform-ops
+    task: >
+      Compile 24h platform health summary: uptime, inference latency,
+      agent task counts, error rates, DB size, disk usage.
+      Email admin digest.
+
+  # Weekly Monday 06:00 UTC — full platform audit
+  - name: weekly-audit
+    cron: "0 6 * * 1"
+    agent: platform-ops
+    task: >
+      Full platform audit: all subsystem health, agent performance,
+      database integrity, SMTP connectivity, chain listener status,
+      registry stats, knowledge base metrics. Email admin report.

@@ -114,6 +114,60 @@ async def run_all_checks():
     except FileNotFoundError:
         results["memory"] = {"ok": True, "note": "Non-Linux — skipped"}
 
+    # Agent queue depth check
+    try:
+        db_path = os.getenv("DATABASE_PATH", "public.db")
+        if Path(db_path).exists():
+            conn = sqlite3.connect(db_path, timeout=5)
+            row = conn.execute("SELECT COUNT(*) FROM agent_tasks WHERE status = 'pending'").fetchone()
+            pending = row[0] if row else 0
+            conn.close()
+            results["agent_queue"] = {
+                "ok": pending < 50,
+                "pending_tasks": pending,
+                "warning": "Queue depth > 200" if pending >= 200 else ("Queue depth > 50" if pending >= 50 else None),
+            }
+    except Exception as e:
+        results["agent_queue"] = {"ok": True, "note": f"Skipped: {str(e)[:100]}"}
+
+    # Memory storage growth check
+    try:
+        memory_dir = Path(os.getenv("REFINET_ROOT", ".")) / "memory"
+        large_files = []
+        if memory_dir.exists():
+            for subdir in ("episodic", "semantic", "procedural"):
+                d = memory_dir / subdir
+                if d.exists():
+                    for f in d.iterdir():
+                        if f.is_file() and f.stat().st_size > 100 * 1024 * 1024:
+                            large_files.append(f"{subdir}/{f.name}: {f.stat().st_size // (1024*1024)}MB")
+        results["memory_storage"] = {
+            "ok": len(large_files) == 0,
+            "large_files": large_files if large_files else None,
+        }
+    except Exception as e:
+        results["memory_storage"] = {"ok": True, "note": f"Skipped: {str(e)[:100]}"}
+
+    # Embedding index health check
+    try:
+        db_path = os.getenv("DATABASE_PATH", "public.db")
+        if Path(db_path).exists():
+            conn = sqlite3.connect(db_path, timeout=5)
+            total_row = conn.execute("SELECT COUNT(*) FROM knowledge_chunks").fetchone()
+            embedded_row = conn.execute("SELECT COUNT(*) FROM knowledge_chunks WHERE embedding IS NOT NULL").fetchone()
+            conn.close()
+            total = total_row[0] if total_row else 0
+            embedded = embedded_row[0] if embedded_row else 0
+            missing_pct = ((total - embedded) / total * 100) if total > 0 else 0
+            results["embedding_index"] = {
+                "ok": missing_pct <= 10,
+                "total_chunks": total,
+                "embedded": embedded,
+                "missing_pct": round(missing_pct, 1),
+            }
+    except Exception as e:
+        results["embedding_index"] = {"ok": True, "note": f"Skipped: {str(e)[:100]}"}
+
     return results
 
 
@@ -158,12 +212,18 @@ def send_email(subject, html_body, text_body):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="REFINET Platform Health Check")
+    parser.add_argument("--email", action="store_true", help="Send email report on failure (or always with --always)")
+    parser.add_argument("--always", action="store_true", help="Send email even when all checks pass")
+    args = parser.parse_args()
+
     results = asyncio.run(run_all_checks())
     report_text, all_ok = format_report(results)
     print(report_text)
 
-    should_email = "--email" in sys.argv
-    always_email = "--always" in sys.argv
+    should_email = args.email
+    always_email = args.always
 
     if should_email and (not all_ok or always_email):
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")

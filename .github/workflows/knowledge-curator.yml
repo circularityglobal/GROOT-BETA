@@ -1,4 +1,5 @@
 name: REFINET Knowledge Curator — Autonomous RAG/CAG Maintenance
+# Estimated: ~150 min/month (4 runs/day x 30 = 120 runs x ~1.5 min)
 
 on:
   schedule:
@@ -12,6 +13,10 @@ on:
         description: 'Knowledge curator task'
         required: false
         default: 'Full knowledge base health check with repair and email report'
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
 
 jobs:
   health-check:

@@ -1,0 +1,61 @@
+# REFINET Security Sentinel — Autonomous Defense Schedule
+# The sentinel observes and reports — it never blocks, bans, or modifies.
+# All enforcement requires explicit admin approval.
+
+schedules:
+  # Every 15 minutes — authentication anomaly scan
+  - name: auth-scan
+    interval: 15m
+    agent: security-sentinel
+    task: >
+      Run all anomaly detection rules against the audit log.
+      Check for: SIWE brute force (5+ fails/IP/hour), TOTP brute force
+      (3+ fails/user/30min), expired JWT reuse, credential stuffing,
+      API key abuse, admin access anomalies.
+      Alert admin for CRITICAL/HIGH severity findings.
+
+  # Every hour — rate limit pattern analysis
+  - name: rate-analysis
+    interval: 1h
+    agent: security-sentinel
+    task: >
+      Analyze rate limit hit patterns from the past hour.
+      Classify as NORMAL, TRAFFIC_SPIKE, or LIKELY_ABUSE based on
+      IP concentration, diversity, and hourly distribution.
+      Alert admin if LIKELY_ABUSE detected.
+
+  # Daily at 05:00 UTC — security briefing
+  - name: daily-briefing
+    cron: "0 5 * * *"
+    agent: security-sentinel
+    task: >
+      Compile 24h security briefing: anomalies detected, rate limit
+      classifications, TLS status, wallet flags, gate test results.
+      Email admin structured briefing.
+
+  # Weekly Sunday 04:00 UTC — TLS certificate check
+  - name: tls-check
+    cron: "0 4 * * 0"
+    agent: security-sentinel
+    task: >
+      Check TLS cert expiry for api.refinet.io and app.refinet.io.
+      Alert levels: CRITICAL (7 days), HIGH (14 days), MEDIUM (30 days).
+
+  # Weekly Sunday 04:30 UTC — BYOK Security Gate validation
+  - name: gate-validation
+    cron: "30 4 * * 0"
+    agent: security-sentinel
+    task: >
+      Validate BYOK Security Gate enforcement. Test that unauthenticated
+      requests to /keys/* and /provider-keys/* return HTTP 403.
+      Alert on any gate bypass detected.
+
+  # Weekly Sunday 05:00 UTC — wallet forensics
+  - name: wallet-forensics
+    cron: "0 5 * * 0"
+    agent: security-sentinel
+    task: >
+      Analyze all SIWE-authenticated wallets from past 7 days.
+      Flag: endpoint sweeping (50+ unique endpoints), multi-IP usage
+      (5+ IPs), high error rates (30%+), rate limit abuse (3+ hits).
+      Email admin with flagged wallets.

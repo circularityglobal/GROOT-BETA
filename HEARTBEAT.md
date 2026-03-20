@@ -78,3 +78,44 @@ Run manually:
 python3 skills/refinet-contract-watcher/scripts/contract_scan.py --scan-abis --email
 ./skills/refinet-platform-ops/scripts/run_agent.sh contract-watcher "Check bridge activity"
 ```
+
+### Repo Migrator Integration
+
+The repo migrator is primarily user-triggered (not heartbeat-driven), but has maintenance tasks:
+
+| Interval | Agent | Task |
+|---|---|---|
+| User request | repo-migrator | Full GitHub-to-REFINET migration pipeline |
+| Daily 07:00 | repo-migrator | Retry failed migrations |
+| Weekly Mon 07:00 | repo-migrator | Migration stats digest |
+
+When a migration completes, the repo-migrator delegates to:
+- `knowledge-curator` → CAG index sync for new contracts
+- `contract-watcher` → ABI security analysis for dangerous patterns
+
+Run manually:
+```bash
+python3 skills/refinet-repo-migrator/scripts/repo_migrate.py https://github.com/owner/repo --dry-run
+./skills/refinet-platform-ops/scripts/run_agent.sh repo-migrator "Retry failed migrations"
+```
+
+### Security Sentinel Integration
+
+The security sentinel runs continuous defense monitoring:
+
+| Interval | Agent | Task |
+|---|---|---|
+| 15m | security-sentinel | Auth anomaly detection (SIWE, TOTP, JWT, credential stuffing) |
+| 1h | security-sentinel | Rate limit pattern analysis (normal vs abuse classification) |
+| Daily 05:00 | security-sentinel | 24-hour security briefing email |
+| Weekly Sun 04:00 | security-sentinel | TLS certificate expiry check |
+| Weekly Sun 04:30 | security-sentinel | BYOK Security Gate validation |
+| Weekly Sun 05:00 | security-sentinel | SIWE wallet forensics (7-day window) |
+
+The sentinel observes and reports — it never blocks, bans, or modifies. All enforcement requires explicit admin approval.
+
+Run manually:
+```bash
+python3 skills/refinet-security-sentinel/scripts/security_scan.py --full --email
+./skills/refinet-platform-ops/scripts/run_agent.sh security-sentinel "Run full security audit"
+```

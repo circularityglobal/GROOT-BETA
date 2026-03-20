@@ -8,6 +8,8 @@ Falls back gracefully if model is unavailable.
 import json
 import logging
 import math
+import threading
+from collections import OrderedDict
 from typing import Optional
 
 logger = logging.getLogger("refinet.embedding")
@@ -15,6 +17,11 @@ logger = logging.getLogger("refinet.embedding")
 # Lazy-loaded singleton
 _model = None
 _model_load_attempted = False
+
+# In-memory embedding cache — 512 entries x 384 dims x 4 bytes ≈ 750KB
+_EMBED_CACHE_MAX = 512
+_embed_cache: OrderedDict[str, list[float]] = OrderedDict()
+_embed_cache_lock = threading.Lock()
 
 
 def _load_model():
@@ -34,29 +41,72 @@ def _load_model():
 
 
 def embed_text(text: str) -> Optional[list[float]]:
-    """Embed a single text string. Returns 384-dim float list or None if model unavailable."""
+    """Embed a single text string. Returns 384-dim float list or None if model unavailable.
+    Results are cached in an LRU cache (max 512 entries, ~750KB)."""
+    # Check cache first
+    with _embed_cache_lock:
+        cached = _embed_cache.get(text)
+        if cached is not None:
+            _embed_cache.move_to_end(text)
+            return cached
+
     model = _load_model()
     if model is None:
         return None
     try:
         vec = model.encode(text, normalize_embeddings=True)
-        return vec.tolist()
+        result = vec.tolist()
+        # Store in cache
+        with _embed_cache_lock:
+            _embed_cache[text] = result
+            _embed_cache.move_to_end(text)
+            while len(_embed_cache) > _EMBED_CACHE_MAX:
+                _embed_cache.popitem(last=False)
+        return result
     except Exception as e:
         logger.error(f"Embedding error: {e}")
         return None
 
 
 def embed_batch(texts: list[str]) -> Optional[list[list[float]]]:
-    """Embed multiple texts in batch. Returns list of 384-dim vectors or None."""
+    """Embed multiple texts in batch. Returns list of 384-dim vectors or None.
+    Checks cache for each text, only computes embeddings for cache misses."""
     model = _load_model()
     if model is None:
         return None
-    try:
-        vecs = model.encode(texts, normalize_embeddings=True, batch_size=32)
-        return [v.tolist() for v in vecs]
-    except Exception as e:
-        logger.error(f"Batch embedding error: {e}")
-        return None
+
+    results: list[Optional[list[float]]] = [None] * len(texts)
+    uncached_indices: list[int] = []
+    uncached_texts: list[str] = []
+
+    # Gather cache hits
+    with _embed_cache_lock:
+        for i, text in enumerate(texts):
+            cached = _embed_cache.get(text)
+            if cached is not None:
+                _embed_cache.move_to_end(text)
+                results[i] = cached
+            else:
+                uncached_indices.append(i)
+                uncached_texts.append(text)
+
+    # Compute only cache misses
+    if uncached_texts:
+        try:
+            vecs = model.encode(uncached_texts, normalize_embeddings=True, batch_size=32)
+            with _embed_cache_lock:
+                for idx, text, vec in zip(uncached_indices, uncached_texts, vecs):
+                    vec_list = vec.tolist()
+                    results[idx] = vec_list
+                    _embed_cache[text] = vec_list
+                    _embed_cache.move_to_end(text)
+                    while len(_embed_cache) > _EMBED_CACHE_MAX:
+                        _embed_cache.popitem(last=False)
+        except Exception as e:
+            logger.error(f"Batch embedding error: {e}")
+            return None
+
+    return results
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:

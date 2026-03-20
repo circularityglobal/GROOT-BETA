@@ -348,13 +348,19 @@ def send_email(subject, html_body, text_body):
 # Main
 # ─────────────────────────────────────────────────────────────────
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="REFINET Contract Watcher — ABI Security Scanner")
+    parser.add_argument("--scan-abis", action="store_true", help="Scan unanalyzed ABIs for dangerous patterns")
+    parser.add_argument("--email", action="store_true", help="Send email report to admin")
+    args = parser.parse_args()
+
     db = get_db()
     event_stats = get_event_stats(db)
     registry_stats = get_registry_stats(db)
 
     scan_results = {"scanned": 0, "critical_total": 0, "high_total": 0, "flagged_abis": []}
 
-    if "--scan-abis" in sys.argv:
+    if args.scan_abis:
         unscanned = get_unscanned_abis(db)
         print(f"[chain] Found {len(unscanned)} unscanned ABIs")
         for abi_info in unscanned:
@@ -377,7 +383,7 @@ def main():
     text_report, html_report = format_report(event_stats, registry_stats, scan_results)
     print(text_report)
 
-    if "--email" in sys.argv:
+    if args.email:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         has_critical = scan_results["critical_total"] > 0
         subject_status = "CRITICAL FLAGS DETECTED" if has_critical else "Status Report"
