@@ -414,6 +414,87 @@ class RefinetAPI {
   adminImportChainlist = (chainId: number) => this.post('/admin/chains/import', { chain_id: chainId })
   adminUpdateChain = (chainId: number, data: any) => this.put(`/admin/chains/${chainId}`, data)
   adminDeactivateChain = (chainId: number) => this.delete(`/admin/chains/${chainId}`)
+
+  // ── Agents ──────────────────────────────────────────────────────
+  registerAgent = (data: { name: string; description?: string; archetype?: string }) =>
+    this.post('/agents/register', data)
+  registerAgentWithManifest = (manifest: any) =>
+    this.post('/agents/register-with-manifest', manifest)
+  validateManifest = (manifest: any) =>
+    this.post('/agents/validate-manifest', manifest)
+  listAgents = () => this.get('/agents/')
+  agentHeartbeat = (agentId: string) => this.post(`/agents/${agentId}/heartbeat`, {})
+  getAgentConfig = (agentId: string) => this.get(`/agents/${agentId}/config`)
+  updateAgentConfig = (agentId: string, config: any) =>
+    this.put(`/agents/${agentId}/config`, config)
+  getAgentSoul = (agentId: string) => this.get(`/agents/${agentId}/soul`)
+  updateAgentSoul = (agentId: string, soul: string) =>
+    this.post(`/agents/${agentId}/soul`, { soul_md: soul })
+  runAgentTask = (agentId: string, task: string) =>
+    this.post(`/agents/${agentId}/run`, { task })
+  listAgentTasks = (agentId: string, status?: string) =>
+    this.get(`/agents/${agentId}/tasks${status ? `?status=${status}` : ''}`)
+  getAgentTask = (agentId: string, taskId: string) =>
+    this.get(`/agents/${agentId}/tasks/${taskId}`)
+  getAgentTaskSteps = (agentId: string, taskId: string) =>
+    this.get(`/agents/${agentId}/tasks/${taskId}/steps`)
+  cancelAgentTask = (agentId: string, taskId: string) =>
+    this.post(`/agents/${agentId}/tasks/${taskId}/cancel`, {})
+  delegateAgentTask = (agentId: string, data: { target_agent_id: string; subtask: string; source_task_id: string }) =>
+    this.post(`/agents/${agentId}/delegate`, data)
+
+  // ── Chain Watchers ──────────────────────────────────────────────
+  createWatcher = (data: { contract_address: string; chain: string; events?: string[] }) =>
+    this.post('/chain/watchers', data)
+  listWatchers = () => this.get('/chain/watchers')
+  deleteWatcher = (watcherId: string) => this.delete(`/chain/watchers/${watcherId}`)
+  getWatcherEvents = (watcherId: string, limit = 50) =>
+    this.get(`/chain/watchers/${watcherId}/events?limit=${limit}`)
+
+  // ── Payments & Subscriptions ────────────────────────────────────
+  getFeeSchedule = () => this.get('/payments/fee-schedule')
+  checkout = (data: { item_type: string; item_id: string; chain?: string }) =>
+    this.post('/payments/checkout', data)
+  completePayment = (paymentId: string) =>
+    this.post(`/payments/${paymentId}/complete`, {})
+  paymentHistory = () => this.get('/payments/history')
+  subscriptionStatus = () => this.get('/payments/subscriptions/status')
+  upgradeSubscription = (tier: string) =>
+    this.post('/payments/subscriptions/upgrade', { tier })
+  adminRevenue = () => this.get('/payments/admin/revenue')
+  adminRevenueSplits = () => this.get('/payments/admin/revenue-splits')
+
+  // ── Broker Sessions ─────────────────────────────────────────────
+  createBrokerSession = (data: { agent_id: string; service_type: string }) =>
+    this.post('/broker/sessions', data)
+  listBrokerSessions = () => this.get('/broker/sessions')
+  getBrokerSession = (sessionId: string) => this.get(`/broker/sessions/${sessionId}`)
+  completeBrokerSession = (sessionId: string) =>
+    this.post(`/broker/sessions/${sessionId}/complete`, {})
+  cancelBrokerSession = (sessionId: string) =>
+    this.post(`/broker/sessions/${sessionId}/cancel`, {})
+  getBrokerFees = (serviceType: string) => this.get(`/broker/fees/${serviceType}`)
+
+  // ── Vector Memory ───────────────────────────────────────────────
+  vectorMemoryHealth = () => this.get('/vector-memory/health')
+  storeMemory = (data: { agent_id: string; content: string; metadata?: any }) =>
+    this.post('/vector-memory/store', data)
+  searchMemory = (data: { agent_id: string; query: string; limit?: number }) =>
+    this.post('/vector-memory/search', data)
+  getMemoryContext = (data: { agent_id: string; query: string }) =>
+    this.post('/vector-memory/context', data)
+  memoryStats = (agentId: string) => this.get(`/vector-memory/stats/${agentId}`)
+  deleteMemory = (memoryId: string) => this.delete(`/vector-memory/${memoryId}`)
+
+  // ── Scheduled Tasks (Admin) ─────────────────────────────────────
+  listScheduledTasks = () => this.get('/admin/scheduled-tasks')
+  createScheduledTask = (data: { name: string; cron: string; agent: string; task: string }) =>
+    this.post('/admin/scheduled-tasks', data)
+  updateScheduledTask = (taskId: string, data: any) =>
+    this.put(`/admin/scheduled-tasks/${taskId}`, data)
+  deleteScheduledTask = (taskId: string) => this.delete(`/admin/scheduled-tasks/${taskId}`)
+  runScheduledTask = (taskId: string) =>
+    this.post(`/admin/scheduled-tasks/${taskId}/run`, {})
 }
 
 export const api = new RefinetAPI()

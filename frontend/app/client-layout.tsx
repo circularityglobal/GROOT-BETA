@@ -381,9 +381,11 @@ function AppShell({ children }: { children: React.ReactNode }) {
             )}
 
             <SidebarItem href="/chat/" icon={<ChatIcon />} label="Chat" active={isActive('/chat')} collapsed={collapsed} />
-            <SidebarItem href="/devices/" icon={<DevicesIcon />} label="Devices" active={isActive('/devices')} collapsed={collapsed} />
-            <SidebarItem href="/webhooks/" icon={<WebhooksIcon />} label="Webhooks" active={isActive('/webhooks')} collapsed={collapsed} />
+            <SidebarItem href="/agents/" icon={<AgentsIcon />} label="Agents" active={isActive('/agents')} collapsed={collapsed} />
             <SidebarItem href="/knowledge/" icon={<KnowledgeIcon />} label="Knowledge" active={isActive('/knowledge')} collapsed={collapsed} />
+            <SidebarItem href="/devices/" icon={<DevicesIcon />} label="Devices" active={isActive('/devices')} collapsed={collapsed} />
+            <SidebarItem href="/messages/" icon={<ChatIcon />} label="Messages" active={isActive('/messages')} collapsed={collapsed} />
+            <SidebarItem href="/network/" icon={<WebhooksIcon />} label="Network" active={isActive('/network')} collapsed={collapsed} />
 
             <div style={{ height: 4 }} />
             {!collapsed && (
@@ -399,6 +401,8 @@ function AppShell({ children }: { children: React.ReactNode }) {
             <SidebarItem href="/explore/" icon={<RegistryIcon />} label="Registry" active={isActive('/explore')} collapsed={collapsed} />
             <SidebarItem href="/store/" icon={<StoreIcon />} label="App Store" active={isActive('/store')} collapsed={collapsed} />
             <SidebarItem href="/repo/" icon={<RepoIcon />} label="Repositories" active={isActive('/repo')} collapsed={collapsed} />
+            <SidebarItem href="/webhooks/" icon={<WebhooksIcon />} label="Webhooks" active={isActive('/webhooks')} collapsed={collapsed} />
+            <SidebarItem href="/payments/" icon={<DashboardIcon />} label="Payments" active={isActive('/payments')} collapsed={collapsed} />
             <SidebarButton icon={<DocsIcon />} label="API Docs" active={docsOpen} collapsed={collapsed} onClick={() => setDocsOpen(true)} />
           </nav>
 
@@ -584,3 +588,4 @@ function RepoIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fil
 function StoreIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 7v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-3-5z"/><line x1="3" y1="7" x2="21" y2="7"/><path d="M16 11a4 4 0 0 1-8 0"/></svg> }
 function DocsIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> }
 function AdminIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> }
+function AgentsIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg> }
