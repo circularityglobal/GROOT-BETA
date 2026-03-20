@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m pytest *)",
+      "Bash(python3 scripts/*)",
+      "Bash(cd frontend && npx tsc --noEmit*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(ls *)",
+      "Bash(wc *)",
+      "Bash(cat .gitignore)",
+      "Bash(mkdir -p *)",
+      "Bash(chmod +x *)",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)",
+      "Bash(cat .env)",
+      "Bash(cat *.pem)",
+      "Bash(cat *.key)"
+    ]
+  },
+  "env": {
+    "REFINET_ENV": "development"
+  }
+}
