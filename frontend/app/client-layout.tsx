@@ -9,6 +9,7 @@ import { API_URL } from '@/lib/config'
 import GrootChatWidget from '@/components/GrootChat'
 import SettingsModal from '@/components/SettingsModal'
 import DocsModal from '@/components/DocsModal'
+import OnboardingWizard from '@/components/OnboardingWizard'
 
 // Wallet providers
 import { WagmiProvider } from 'wagmi'
@@ -151,10 +152,21 @@ function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [docsOpen, setDocsOpen] = useState(false)
+  const [showOnboarding, setShowOnboarding] = useState(false)
 
   useEffect(() => {
     const saved = localStorage.getItem('refinet_sidebar_collapsed')
     if (saved === 'true') setCollapsed(true)
+  }, [])
+
+  // Show onboarding wizard for new users who haven't completed it
+  useEffect(() => {
+    const completed = localStorage.getItem('refinet_onboarding_complete')
+    if (!completed) {
+      // Small delay so the dashboard renders first, then overlay appears
+      const timer = setTimeout(() => setShowOnboarding(true), 500)
+      return () => clearTimeout(timer)
+    }
   }, [])
 
   // Close mobile menu on route change
@@ -426,6 +438,11 @@ function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Docs modal (GitBook-style) */}
       <DocsModal open={docsOpen} onClose={() => setDocsOpen(false)} />
+
+      {/* Onboarding wizard for new users */}
+      {showOnboarding && (
+        <OnboardingWizard onComplete={() => setShowOnboarding(false)} />
+      )}
     </div>
   )
 }
