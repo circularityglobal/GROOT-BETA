@@ -43,11 +43,18 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   const loadData = useCallback(() => {
     const t = getToken()
-    if (!t) return
+    if (!t) { setLoading(false); return }
     setLoading(true)
     Promise.all([
-      fetch(`${API_URL}/auth/me`, { headers: { Authorization: `Bearer ${t}` } }).then(r => r.ok ? r.json() : null),
-      fetch(`${API_URL}/keys`, { headers: { Authorization: `Bearer ${t}` } }).then(r => r.ok ? r.json() : []),
+      fetch(`${API_URL}/auth/me`, { headers: { Authorization: `Bearer ${t}` } })
+        .then(r => {
+          if (!r.ok) throw new Error(`Profile fetch failed: ${r.status}`)
+          return r.json()
+        })
+        .catch(e => { console.warn('[Settings] Profile load failed:', e.message); return null }),
+      fetch(`${API_URL}/keys`, { headers: { Authorization: `Bearer ${t}` } })
+        .then(r => r.ok ? r.json() : [])
+        .catch(() => []),
     ]).then(([prof, keys]) => {
       setProfile(prof)
       setApiKeys(Array.isArray(keys) ? keys : [])
@@ -283,16 +290,38 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
           ) : (
             <>
               {/* ── Account Tab ── */}
-              {tab === 'account' && profile && (
+              {tab === 'account' && (
                 <div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                    <Row label="Wallet" value={profile.eth_address || 'Not linked'} mono />
-                    <Row label="Username" value={profile.username} />
-                    <Row label="Email" value={profile.email || 'Not set'} />
-                    <Row label="Tier" value={profile.tier} accent />
-                    <Row label="Password" value={profile.password_enabled ? 'Enabled' : 'Not set'} />
-                    <Row label="2FA (TOTP)" value={profile.totp_enabled ? 'Enabled' : 'Not set'} />
-                  </div>
+                  {profile ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                      <Row label="Wallet" value={profile.eth_address || 'Not linked'} mono />
+                      <Row label="Username" value={profile.username || 'Not set'} />
+                      <Row label="Email" value={profile.email || 'Not set'} />
+                      <Row label="Tier" value={profile.tier || 'free'} accent />
+                      <Row label="Password" value={profile.password_enabled ? 'Enabled' : 'Not set'} />
+                      <Row label="2FA (TOTP)" value={profile.totp_enabled ? 'Enabled' : 'Not set'} />
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: '24px 16px' }}>
+                      <div style={{ fontSize: 28, marginBottom: 8 }}>
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ margin: '0 auto', display: 'block' }}>
+                          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                        </svg>
+                      </div>
+                      <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Unable to load profile</p>
+                      <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 12 }}>
+                        Your session may have expired or the backend is unreachable.
+                      </p>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                        <button onClick={loadData} className="btn-secondary" style={{ fontSize: 12, padding: '8px 16px' }}>
+                          Retry
+                        </button>
+                        <button onClick={() => { window.location.href = '/settings/' }} className="btn-primary" style={{ fontSize: 12, padding: '8px 16px' }}>
+                          Sign In Again
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
