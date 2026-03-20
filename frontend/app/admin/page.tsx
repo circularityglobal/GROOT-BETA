@@ -1564,14 +1564,18 @@ function OnboardingPanel({ headers, onboardingStats, setOnboardingStats, leads, 
             <span className="text-xs font-semibold uppercase" style={{ letterSpacing: '0.05em', color: 'var(--text-tertiary)' }}>
               Email Leads ({leads.length})
             </span>
-            <button onClick={() => {
-              const consented = leads.filter(l => l.marketing_consent)
-              const csv = 'email,username,wallet,tier,marketing_consent,fully_onboarded,created_at\n' +
-                consented.map(l => `${l.email},${l.username},${l.eth_address || ''},${l.tier},${l.marketing_consent},${l.fully_onboarded},${l.created_at || ''}`).join('\n')
-              const blob = new Blob([csv], { type: 'text/csv' })
-              const url = URL.createObjectURL(blob)
-              const a = document.createElement('a'); a.href = url; a.download = 'refinet-consented-leads.csv'; a.click()
-              URL.revokeObjectURL(url)
+            <button onClick={async () => {
+              try {
+                const resp = await fetch(`${API_URL}/admin/leads?consented_only=true`, { headers })
+                if (!resp.ok) return
+                const consented = await resp.json()
+                const csv = 'email,username,wallet,tier,created_at\n' +
+                  consented.map((l: any) => `${l.email},${l.username},${l.eth_address || ''},${l.tier},${l.created_at || ''}`).join('\n')
+                const blob = new Blob([csv], { type: 'text/csv' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a'); a.href = url; a.download = 'refinet-consented-leads.csv'; a.click()
+                URL.revokeObjectURL(url)
+              } catch {}
             }} className="text-[11px] px-3 py-1 rounded-lg transition-colors"
               style={{ background: 'var(--refi-teal-glow)', color: 'var(--refi-teal)' }}>
               Export Consented CSV

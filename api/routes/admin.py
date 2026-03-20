@@ -1469,15 +1469,19 @@ def onboarding_stats(
 @router.get("/leads")
 def get_leads(
     request: Request,
+    consented_only: bool = False,
     pub_db: Session = Depends(public_db_dependency),
     int_db: Session = Depends(internal_db_dependency),
 ):
-    """Get all users with email for lead management and community communication."""
+    """Get users with email for lead management. Use ?consented_only=true for marketing."""
     _require_admin(request, int_db)
 
-    users = pub_db.query(User).filter(
+    query = pub_db.query(User).filter(
         User.email != None, User.email != "",  # noqa
-    ).order_by(User.created_at.desc()).all()
+    )
+    if consented_only:
+        query = query.filter(User.marketing_consent == True)  # noqa
+    users = query.order_by(User.created_at.desc()).all()
 
     return [
         {

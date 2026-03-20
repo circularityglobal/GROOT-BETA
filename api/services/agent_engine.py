@@ -670,7 +670,7 @@ Respond with JSON:
 # ── Delegation Rate Limiter ──────────────────────────────────────
 
 class _DelegationBucket:
-    """Token-bucket rate limiter for agent delegations (10/minute)."""
+    """Token-bucket rate limiter for agent delegations (10/minute per user)."""
 
     def __init__(self, max_tokens: int = 10, refill_rate: float = 10.0 / 60.0):
         self._max_tokens = max_tokens
@@ -691,7 +691,16 @@ class _DelegationBucket:
             return False
 
 
-_delegation_limiter = _DelegationBucket()
+# Per-user rate limiters — prevents one user from DoS'ing all delegations
+_delegation_limiters: dict[str, _DelegationBucket] = {}
+_delegation_limiters_lock = threading.Lock()
+
+
+def _get_user_limiter(user_id: str) -> _DelegationBucket:
+    with _delegation_limiters_lock:
+        if user_id not in _delegation_limiters:
+            _delegation_limiters[user_id] = _DelegationBucket()
+        return _delegation_limiters[user_id]
 
 # ── Delegation ───────────────────────────────────────────────────
 
@@ -708,10 +717,10 @@ async def delegate_task(
     Checks delegation policy on the target agent's soul.
     Rate-limited to 10 delegations per minute to prevent cascading bursts.
     """
-    # Rate limit check
-    if not _delegation_limiter.acquire():
-        logger.warning("Delegation rate limit exceeded — rejecting delegation from %s to %s",
-                        source_agent_id, target_agent_id)
+    # Per-user rate limit check
+    if not _get_user_limiter(user_id).acquire():
+        logger.warning("Delegation rate limit exceeded for user %s — rejecting delegation from %s to %s",
+                        user_id, source_agent_id, target_agent_id)
         return None
 
     from api.services.agent_soul import get_soul

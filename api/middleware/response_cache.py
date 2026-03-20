@@ -32,6 +32,24 @@ _PREFIX_TTLS = {
     "/knowledge/search": 30,
 }
 
+# NEVER cache these paths — they return user-specific or sensitive data
+_NEVER_CACHE_PREFIXES = (
+    "/auth/",
+    "/admin/",
+    "/keys",
+    "/provider-keys",
+    "/payments/",
+    "/agents/",
+    "/messaging/",
+    "/devices/",
+    "/webhooks/",
+    "/broker/",
+    "/vector-memory/",
+    "/pipeline/",
+    "/deployments/",
+    "/repo/",
+)
+
 MAX_CACHE_SIZE = 1000
 MAX_BODY_SIZE = 256 * 1024  # Don't cache responses > 256KB
 
@@ -105,6 +123,11 @@ def get_response_cache() -> ResponseCache:
 
 def _get_ttl(path: str) -> int:
     """Determine cache TTL for a given path. Returns 0 for uncacheable."""
+    # Never cache user-specific or sensitive endpoints
+    for prefix in _NEVER_CACHE_PREFIXES:
+        if path.startswith(prefix):
+            return 0
+
     if path in _ROUTE_TTLS:
         return _ROUTE_TTLS[path]
     for prefix, ttl in _PREFIX_TTLS.items():
@@ -114,11 +137,12 @@ def _get_ttl(path: str) -> int:
 
 
 def _make_cache_key(request: Request) -> str:
-    """Build cache key from method + path + query + user identity."""
+    """Build cache key from method + path + query + user identity.
+    Uses full SHA-256 hash of auth header to prevent collisions."""
     user_id = "anon"
     auth = request.headers.get("authorization", "")
     if auth:
-        user_id = hashlib.md5(auth.encode()).hexdigest()[:8]
+        user_id = hashlib.sha256(auth.encode()).hexdigest()
     raw = f"{request.method}:{request.url.path}:{request.url.query}:{user_id}"
     return raw
 

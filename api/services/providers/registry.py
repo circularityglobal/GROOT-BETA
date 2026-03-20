@@ -20,57 +20,68 @@ from api.services.providers.base import (
 logger = logging.getLogger("refinet.providers.registry")
 
 
-@dataclass
 class CircuitBreaker:
     """
-    In-memory circuit breaker for provider health.
+    Thread-safe in-memory circuit breaker for provider health.
     States: closed (normal) → open (skip) → half_open (probe one request).
     """
-    failure_count: int = 0
-    failure_threshold: int = 3
-    last_failure_time: float = 0.0
-    open_duration: float = 60.0       # seconds before half-open retry
-    max_open_duration: float = 300.0   # cap at 5 minutes
-    state: str = "closed"              # closed | open | half_open
+
+    def __init__(
+        self,
+        failure_threshold: int = 3,
+        open_duration: float = 60.0,
+        max_open_duration: float = 300.0,
+    ):
+        self.failure_count = 0
+        self.failure_threshold = failure_threshold
+        self.last_failure_time = 0.0
+        self.open_duration = open_duration
+        self.max_open_duration = max_open_duration
+        self.state = "closed"
+        self._lock = threading.Lock()
 
     def record_failure(self):
-        self.failure_count += 1
-        self.last_failure_time = time.monotonic()
-        if self.failure_count >= self.failure_threshold:
-            self.state = "open"
-            logger.warning(
-                "Circuit breaker OPEN after %d failures (cooldown %.0fs)",
-                self.failure_count, self.open_duration,
-            )
+        with self._lock:
+            self.failure_count += 1
+            self.last_failure_time = time.monotonic()
+            if self.failure_count >= self.failure_threshold:
+                self.state = "open"
+                logger.warning(
+                    "Circuit breaker OPEN after %d failures (cooldown %.0fs)",
+                    self.failure_count, self.open_duration,
+                )
 
     def record_success(self):
-        if self.state == "half_open":
-            logger.info("Circuit breaker CLOSED — provider recovered")
-        self.failure_count = 0
-        self.open_duration = 60.0
-        self.state = "closed"
+        with self._lock:
+            if self.state == "half_open":
+                logger.info("Circuit breaker CLOSED — provider recovered")
+            self.failure_count = 0
+            self.open_duration = 60.0
+            self.state = "closed"
 
     def is_available(self) -> bool:
-        if self.state == "closed":
-            return True
-        if self.state == "open":
-            elapsed = time.monotonic() - self.last_failure_time
-            if elapsed >= self.open_duration:
-                self.state = "half_open"
-                logger.info("Circuit breaker HALF_OPEN — allowing probe")
+        with self._lock:
+            if self.state == "closed":
                 return True
-            return False
-        # half_open: allow one probe
-        return True
+            if self.state == "open":
+                elapsed = time.monotonic() - self.last_failure_time
+                if elapsed >= self.open_duration:
+                    self.state = "half_open"
+                    logger.info("Circuit breaker HALF_OPEN — allowing probe")
+                    return True
+                return False
+            # half_open: allow one probe
+            return True
 
     def on_probe_failure(self):
         """Called when a half-open probe fails — reopen with exponential backoff."""
-        self.state = "open"
-        self.open_duration = min(self.open_duration * 2, self.max_open_duration)
-        self.last_failure_time = time.monotonic()
-        logger.warning(
-            "Circuit breaker RE-OPENED (backoff %.0fs)", self.open_duration
-        )
+        with self._lock:
+            self.state = "open"
+            self.open_duration = min(self.open_duration * 2, self.max_open_duration)
+            self.last_failure_time = time.monotonic()
+            logger.warning(
+                "Circuit breaker RE-OPENED (backoff %.0fs)", self.open_duration
+            )
 
 
 @dataclass
