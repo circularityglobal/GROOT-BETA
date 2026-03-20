@@ -15,8 +15,8 @@ export default function DashboardPage() {
   const loadDashboardData = useCallback((token: string) => {
     const headers = { Authorization: `Bearer ${token}` }
     return Promise.all([
-      fetch(`${API_URL}/keys`, { headers }).then(r => r.ok ? r.json() : []),
-      fetch(`${API_URL}/devices`, { headers }).then(r => r.ok ? r.json() : []),
+      fetch(`${API_URL}/keys`, { headers }).then(r => r.ok ? r.json() : []).catch(() => []),
+      fetch(`${API_URL}/devices`, { headers }).then(r => r.ok ? r.json() : []).catch(() => []),
       fetch(`${API_URL}/keys/activity`, { headers }).then(r => r.ok ? r.json() : []).catch(() => []),
       fetch(`${API_URL}/webhooks`, { headers }).then(r => r.ok ? r.json() : []).catch(() => []),
     ]).then(([k, d, act, wh]) => {
