@@ -38,6 +38,14 @@ class User(PublicBase):
     created_at = Column(DateTime, server_default=func.now())
     last_login_at = Column(DateTime, nullable=True)
 
+    # Onboarding tracking
+    auth_layer_1_completed_at = Column(DateTime, nullable=True)
+    auth_layer_2_completed_at = Column(DateTime, nullable=True)
+    auth_layer_3_completed_at = Column(DateTime, nullable=True)
+    onboarding_completed_at = Column(DateTime, nullable=True)
+    marketing_consent = Column(Boolean, default=False)
+    marketing_consent_at = Column(DateTime, nullable=True)
+
 
 class ApiKey(PublicBase):
     __tablename__ = "api_keys"

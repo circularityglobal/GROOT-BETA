@@ -1404,6 +1404,102 @@ def platform_stats(
     )
 
 
+# ── Onboarding & Lead Stats ──────────────────────────────────────
+
+@router.get("/stats/onboarding")
+def onboarding_stats(
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Onboarding funnel metrics, lead capture, and marketing consent stats."""
+    _require_admin(request, int_db)
+
+    total = pub_db.query(User).count()
+    layer_3 = pub_db.query(User).filter(User.auth_layer_3_complete == True).count()  # noqa
+    layer_1 = pub_db.query(User).filter(User.auth_layer_1_complete == True).count()  # noqa
+    layer_2 = pub_db.query(User).filter(User.auth_layer_2_complete == True).count()  # noqa
+    full = pub_db.query(User).filter(
+        User.auth_layer_1_complete == True,  # noqa
+        User.auth_layer_2_complete == True,  # noqa
+        User.auth_layer_3_complete == True,  # noqa
+    ).count()
+    with_email = pub_db.query(User).filter(User.email != None, User.email != "").count()  # noqa
+    consented = pub_db.query(User).filter(User.marketing_consent == True).count()  # noqa
+
+    # Recent signups (last 7 days)
+    from datetime import timedelta
+    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    recent_signups = pub_db.query(User).filter(User.created_at >= week_ago).count()
+
+    # Inactive (no login > 30 days)
+    month_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    inactive_30d = pub_db.query(User).filter(
+        User.last_login_at != None,  # noqa
+        User.last_login_at < month_ago,
+    ).count()
+
+    return {
+        "total_users": total,
+        "funnel": {
+            "wallet_connected": layer_3,
+            "email_set": with_email,
+            "password_set": layer_1,
+            "totp_enabled": layer_2,
+            "fully_onboarded": full,
+        },
+        "rates": {
+            "email_capture_pct": round(with_email / total * 100, 1) if total > 0 else 0,
+            "password_set_pct": round(layer_1 / total * 100, 1) if total > 0 else 0,
+            "totp_enabled_pct": round(layer_2 / total * 100, 1) if total > 0 else 0,
+            "full_onboarding_pct": round(full / total * 100, 1) if total > 0 else 0,
+            "marketing_consent_pct": round(consented / total * 100, 1) if total > 0 else 0,
+        },
+        "marketing": {
+            "consented": consented,
+            "total_with_email": with_email,
+        },
+        "activity": {
+            "signups_last_7d": recent_signups,
+            "inactive_30d": inactive_30d,
+        },
+    }
+
+
+@router.get("/leads")
+def get_leads(
+    request: Request,
+    pub_db: Session = Depends(public_db_dependency),
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """Get all users with email for lead management and community communication."""
+    _require_admin(request, int_db)
+
+    users = pub_db.query(User).filter(
+        User.email != None, User.email != "",  # noqa
+    ).order_by(User.created_at.desc()).all()
+
+    return [
+        {
+            "id": u.id,
+            "username": u.username,
+            "email": u.email,
+            "eth_address": u.eth_address,
+            "tier": u.tier,
+            "marketing_consent": u.marketing_consent or False,
+            "password_set": u.auth_layer_1_complete or False,
+            "totp_enabled": u.auth_layer_2_complete or False,
+            "wallet_connected": u.auth_layer_3_complete or False,
+            "fully_onboarded": bool(
+                u.auth_layer_1_complete and u.auth_layer_2_complete and u.auth_layer_3_complete
+            ),
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+        }
+        for u in users
+    ]
+
+
 # ── GROOT Wallet Admin Endpoints ─────────────────────────────────
 
 @router.get("/wallet")

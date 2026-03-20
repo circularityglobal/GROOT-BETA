@@ -495,6 +495,10 @@ class RefinetAPI {
   deleteScheduledTask = (taskId: string) => this.delete(`/admin/scheduled-tasks/${taskId}`)
   runScheduledTask = (taskId: string) =>
     this.post(`/admin/scheduled-tasks/${taskId}/run`, {})
+
+  // ── Onboarding & Leads (Admin) ──────────────────────────────────
+  getOnboardingStats = () => this.get('/admin/stats/onboarding')
+  getLeads = () => this.get('/admin/leads')
 }
 
 export const api = new RefinetAPI()

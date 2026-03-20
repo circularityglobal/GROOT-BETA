@@ -100,12 +100,15 @@ class UserProfile(BaseModel):
     is_custodial_wallet: bool = False
     created_at: Optional[datetime] = None
     last_login_at: Optional[datetime] = None
+    marketing_consent: bool = False
+    onboarding_completed_at: Optional[datetime] = None
     identities: list["WalletIdentityResponse"] = []
 
 
 class UpdateProfileRequest(BaseModel):
     username: Optional[str] = Field(None, min_length=3, max_length=32, pattern=r"^[a-zA-Z0-9_-]+$")
     email: Optional[EmailStr] = None
+    marketing_consent: Optional[bool] = None
 
 
 # ── Wallet Identity ──────────────────────────────────────────────

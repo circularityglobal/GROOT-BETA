@@ -25,6 +25,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   // Profile fields
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
+  const [marketingConsent, setMarketingConsent] = useState(false)
 
   // Security fields
   const [password, setPassword] = useState('')
@@ -90,7 +91,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       const body: any = {}
       if (username.trim() && username !== profile?.username) body.username = username.trim()
       if (email.trim() && email !== profile?.email) body.email = email.trim()
-      if (Object.keys(body).length === 0) { setStep('security'); setSaving(false); return }
+      body.marketing_consent = marketingConsent
       const resp = await fetch(`${API_URL}/auth/me`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) })
       if (!resp.ok) { const d = await resp.json().catch(() => ({})); setError(d.detail || 'Failed to update profile'); setSaving(false); return }
       setMsg('Profile updated')
@@ -285,6 +286,33 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                   <input className="input-base focus-glow" type="email" style={{ width: '100%', fontSize: 14 }} value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" />
                   <p style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 4 }}>Required for password recovery and admin alerts</p>
                 </div>
+              </div>
+
+              {/* Marketing consent */}
+              <div style={{ marginTop: 16, padding: '14px 16px', borderRadius: 10, background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)' }}>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                  <div onClick={() => setMarketingConsent(!marketingConsent)} style={{
+                    width: 18, height: 18, borderRadius: 4, flexShrink: 0, marginTop: 1,
+                    border: `2px solid ${marketingConsent ? 'var(--refi-teal)' : 'var(--border-default)'}`,
+                    background: marketingConsent ? 'var(--refi-teal)' : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.15s',
+                  }}>
+                    {marketingConsent && (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-inverse)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    )}
+                  </div>
+                  <div>
+                    <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+                      Keep me updated on REFINET Cloud
+                    </span>
+                    <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 3, lineHeight: 1.5 }}>
+                      Receive platform updates, new features, community events, and ecosystem news.
+                      No spam &mdash; unsubscribe anytime. We never share your data with third parties.
+                    </p>
+                  </div>
+                </label>
               </div>
 
               <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>

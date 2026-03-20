@@ -191,12 +191,17 @@ def siwe_verify(
             siwe_enabled=True,
             is_active=True,
             auth_layer_3_complete=True,
+            auth_layer_3_completed_at=datetime.now(timezone.utc),
             primary_chain_id=chain_id,
         )
         db.add(user)
 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is deactivated")
+
+    # Record layer 3 timestamp for existing users on first SIWE
+    if not user.auth_layer_3_completed_at:
+        user.auth_layer_3_completed_at = datetime.now(timezone.utc)
 
     user.last_login_at = datetime.now(timezone.utc)
     db.flush()  # Single flush for user creation + login timestamp
@@ -261,14 +266,10 @@ def logout(request: Request, db: Session = Depends(public_db_dependency)):
 
 # ── Profile ────────────────────────────────────────────────────────
 
-@router.get("/me", response_model=UserProfile)
-def get_me(request: Request, db: Session = Depends(public_db_dependency)):
-    payload, user = _get_current_user(request, db)
-
-    # Load wallet identities
+def _build_user_profile(user, db) -> UserProfile:
+    """Build UserProfile response from a User model instance."""
     identities = get_user_identities(db, user.id)
     identity_responses = [_identity_to_response(i) for i in identities]
-
     return UserProfile(
         id=user.id,
         username=user.username,
@@ -281,8 +282,16 @@ def get_me(request: Request, db: Session = Depends(public_db_dependency)):
         is_custodial_wallet=user.is_custodial_wallet or False,
         created_at=user.created_at,
         last_login_at=user.last_login_at,
+        marketing_consent=user.marketing_consent or False,
+        onboarding_completed_at=getattr(user, 'onboarding_completed_at', None),
         identities=identity_responses,
     )
+
+
+@router.get("/me", response_model=UserProfile)
+def get_me(request: Request, db: Session = Depends(public_db_dependency)):
+    payload, user = _get_current_user(request, db)
+    return _build_user_profile(user, db)
 
 
 @router.put("/me", response_model=UserProfile)
@@ -310,25 +319,14 @@ def update_profile(
             raise HTTPException(status_code=409, detail="Email already registered")
         user.email = req.email
 
+    if req.marketing_consent is not None:
+        user.marketing_consent = req.marketing_consent
+        if req.marketing_consent and not user.marketing_consent_at:
+            user.marketing_consent_at = datetime.now(timezone.utc)
+
     db.flush()
 
-    identities = get_user_identities(db, user.id)
-    identity_responses = [_identity_to_response(i) for i in identities]
-
-    return UserProfile(
-        id=user.id,
-        username=user.username,
-        tier=user.tier,
-        eth_address=user.eth_address,
-        email=user.email,
-        primary_chain_id=user.primary_chain_id or 1,
-        password_enabled=bool(user.hashed_password),
-        totp_enabled=user.totp_enabled,
-        is_custodial_wallet=user.is_custodial_wallet or False,
-        created_at=user.created_at,
-        last_login_at=user.last_login_at,
-        identities=identity_responses,
-    )
+    return _build_user_profile(user, db)
 
 
 # ── Wallet Identity Management ────────────────────────────────────
@@ -437,6 +435,8 @@ def set_password(
     user.email_salt = email_salt
     user.hashed_password = hashed
     user.auth_layer_1_complete = True
+    if not user.auth_layer_1_completed_at:
+        user.auth_layer_1_completed_at = datetime.now(timezone.utc)
 
     if req.username:
         existing = db.query(User).filter(
@@ -572,6 +572,11 @@ def totp_verify_setup(
 
     user.totp_enabled = True
     user.auth_layer_2_complete = True
+    if not user.auth_layer_2_completed_at:
+        user.auth_layer_2_completed_at = datetime.now(timezone.utc)
+    # Check if all 3 layers are now complete
+    if user.auth_layer_1_complete and user.auth_layer_3_complete and not user.onboarding_completed_at:
+        user.onboarding_completed_at = datetime.now(timezone.utc)
 
     # Encrypt the TOTP secret if we have an eth_address
     if user.eth_address:
