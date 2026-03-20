@@ -189,6 +189,7 @@ def siwe_verify(
             eth_address=eth_address,
             eth_address_hash=compute_eth_address_hash(eth_address),
             siwe_enabled=True,
+            is_active=True,
             auth_layer_3_complete=True,
             primary_chain_id=chain_id,
         )
@@ -667,6 +668,7 @@ def wallet_create(
         eth_address=eth_address,
         eth_address_hash=compute_eth_address_hash(eth_address),
         siwe_enabled=True,
+        is_active=True,
         auth_layer_3_complete=True,
         is_custodial_wallet=True,
         primary_chain_id=req.chain_id,
