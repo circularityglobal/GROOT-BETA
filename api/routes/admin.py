@@ -3,11 +3,14 @@ REFINET Cloud — Admin Routes
 Internal DB operations. Role-gated: requires admin role in internal.db.
 """
 
+import hashlib
 import json
 import os
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse as FastJSONResponse
+from starlette.responses import Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func as sqlfunc
 
@@ -418,23 +421,36 @@ DEFAULT_TAB_VISIBILITY = {
 
 
 @router.get("/tab-visibility")
-def get_tab_visibility(int_db: Session = Depends(internal_db_dependency)):
+def get_tab_visibility(request: Request, int_db: Session = Depends(internal_db_dependency)):
     """
     Public endpoint — returns which tabs are enabled/disabled.
     No auth required (frontend layout needs this at boot time).
+    Supports ETag / If-None-Match for conditional requests (304).
     """
     config = int_db.query(SystemConfig).filter(
         SystemConfig.key == "tab_visibility"
     ).first()
     if not config:
-        return {"tabs": DEFAULT_TAB_VISIBILITY}
-    try:
-        stored = json.loads(config.value)
-        # Merge with defaults so new tabs are visible by default
-        merged = {**DEFAULT_TAB_VISIBILITY, **stored}
-        return {"tabs": merged}
-    except (json.JSONDecodeError, TypeError):
-        return {"tabs": DEFAULT_TAB_VISIBILITY}
+        merged = dict(DEFAULT_TAB_VISIBILITY)
+    else:
+        try:
+            stored = json.loads(config.value)
+            merged = {**DEFAULT_TAB_VISIBILITY, **stored}
+        except (json.JSONDecodeError, TypeError):
+            merged = dict(DEFAULT_TAB_VISIBILITY)
+
+    # Compute ETag from tab state
+    etag = hashlib.md5(json.dumps(merged, sort_keys=True).encode()).hexdigest()
+
+    # Return 304 if client already has this version
+    if_none_match = request.headers.get("If-None-Match", "")
+    if if_none_match == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+
+    return FastJSONResponse(
+        content={"tabs": merged, "version": etag},
+        headers={"ETag": etag},
+    )
 
 
 @router.put("/tab-visibility")
@@ -492,7 +508,8 @@ def update_tab_visibility(body: dict, request: Request, int_db: Session = Depend
     from api.middleware.tab_gate import invalidate_tab_cache
     invalidate_tab_cache()
 
-    return {"message": "Tab visibility updated", "tabs": final_tabs}
+    etag = hashlib.md5(json.dumps(final_tabs, sort_keys=True).encode()).hexdigest()
+    return {"message": "Tab visibility updated", "tabs": final_tabs, "version": etag}
 
 
 # ── Stats ──────────────────────────────────────────────────────────

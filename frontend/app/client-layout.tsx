@@ -255,13 +255,93 @@ function AppShell({ children }: { children: React.ReactNode }) {
     if (saved === 'true') setCollapsed(true)
   }, [])
 
-  // Fetch tab visibility (public endpoint)
+  // Fetch tab visibility — event-driven (BroadcastChannel + visibilitychange + navigation) with 60s fallback
+  const visibilityFetchRef = useRef<(() => void) | null>(null)
   useEffect(() => {
-    fetch(`${API_URL}/admin/tab-visibility`)
-      .then(r => r.ok ? r.json() : { tabs: {} })
-      .then(d => setTabVisibility(d.tabs || {}))
-      .catch(() => {})
+    let mounted = true
+    let ctrl: AbortController | null = null
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null
+    let backoffMs = 60_000
+    const MAX_BACKOFF = 120_000
+
+    const getCachedVersion = (): string => {
+      try { return localStorage.getItem('refinet_tab_vis_version') || '' } catch { return '' }
+    }
+
+    const scheduleFallback = () => {
+      if (fallbackTimer) clearTimeout(fallbackTimer)
+      if (!mounted) return
+      fallbackTimer = setTimeout(() => fetchVis('fallback'), backoffMs)
+    }
+
+    const fetchVis = async (reason: string) => {
+      if (ctrl) ctrl.abort()
+      ctrl = new AbortController()
+      const signal = ctrl.signal
+
+      try {
+        const cachedVer = getCachedVersion()
+        const hdrs: Record<string, string> = {}
+        if (cachedVer) hdrs['If-None-Match'] = cachedVer
+
+        const r = await fetch(`${API_URL}/admin/tab-visibility`, { signal, headers: hdrs })
+        if (!mounted) return
+
+        if (r.status === 304) { backoffMs = 60_000; scheduleFallback(); return }
+
+        if (r.ok) {
+          const d = await r.json()
+          if (mounted) {
+            setTabVisibility(d.tabs || {})
+            if (d.version) { try { localStorage.setItem('refinet_tab_vis_version', d.version) } catch {} }
+          }
+          backoffMs = 60_000
+          scheduleFallback()
+          return
+        }
+        // Non-OK: backoff
+        backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF)
+        scheduleFallback()
+      } catch (e: any) {
+        if (e.name === 'AbortError' || !mounted) return
+        backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF)
+        scheduleFallback()
+      }
+    }
+
+    visibilityFetchRef.current = () => fetchVis('navigation')
+
+    // Initial fetch
+    fetchVis('init')
+
+    // Re-fetch when user returns to this browser tab
+    const onVisChange = () => { if (document.visibilityState === 'visible') fetchVis('visibility') }
+    document.addEventListener('visibilitychange', onVisChange)
+
+    // BroadcastChannel for instant same-browser updates when admin saves
+    let bc: BroadcastChannel | null = null
+    try {
+      bc = new BroadcastChannel('refinet_tab_visibility')
+      bc.onmessage = (e) => {
+        if (e.data?.tabs && mounted) {
+          setTabVisibility(e.data.tabs)
+          if (e.data.version) { try { localStorage.setItem('refinet_tab_vis_version', e.data.version) } catch {} }
+          scheduleFallback() // reset timer since we got fresh data
+        }
+      }
+    } catch (_) { /* BroadcastChannel not supported — fallback polling covers it */ }
+
+    return () => {
+      mounted = false
+      if (ctrl) ctrl.abort()
+      if (fallbackTimer) clearTimeout(fallbackTimer)
+      document.removeEventListener('visibilitychange', onVisChange)
+      bc?.close()
+    }
   }, [])
+
+  // Re-fetch tab visibility on every route navigation
+  useEffect(() => { visibilityFetchRef.current?.() }, [pathname])
 
   // Check if current user is master_admin
   useEffect(() => {
