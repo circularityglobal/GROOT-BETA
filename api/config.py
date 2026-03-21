@@ -139,6 +139,9 @@ class Settings(BaseSettings):
             return [
                 f"https://{self.refinet_domain}",
                 self.refinet_frontend_url,
+                "https://www.refinet.io",
+                "https://refinet.io",
+                "https://app.refinet.io",
             ]
         # Development: explicit origins (wildcard "*" is rejected by browsers
         # when allow_credentials=True per the CORS spec)

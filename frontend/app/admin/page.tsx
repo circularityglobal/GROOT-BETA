@@ -12,7 +12,7 @@ export default function AdminPage() {
   const [secrets, setSecrets] = useState<any[]>([])
   const [storeApps, setStoreApps] = useState<any[]>([])
   const [storeStats, setStoreStats] = useState<any>(null)
-  const [tab, setTab] = useState<'stats' | 'users' | 'audit' | 'mcp' | 'secrets' | 'store' | 'reviews' | 'wallets' | 'networks' | 'providers' | 'onboarding' | 'visibility' | 'infra'>('stats')
+  const [tab, setTab] = useState<'stats' | 'users' | 'audit' | 'mcp' | 'secrets' | 'store' | 'reviews' | 'wallets' | 'networks' | 'providers' | 'onboarding' | 'visibility' | 'infra' | 'downloads'>('stats')
   const [onboardingStats, setOnboardingStats] = useState<any>(null)
   const [leads, setLeads] = useState<any[]>([])
   const [error, setError] = useState('')
@@ -220,7 +220,7 @@ export default function AdminPage() {
     )
   }
 
-  const tabs = ['stats', 'onboarding', 'users', 'reviews', 'store', 'providers', 'wallets', 'networks', 'infra', 'audit', 'mcp', 'secrets', 'visibility'] as const
+  const tabs = ['stats', 'onboarding', 'downloads', 'users', 'reviews', 'store', 'providers', 'wallets', 'networks', 'infra', 'audit', 'mcp', 'secrets', 'visibility'] as const
 
   return (
     <div className="max-w-6xl mx-auto py-10 px-6">
@@ -238,13 +238,15 @@ export default function AdminPage() {
               borderBottom: tab === t ? '2px solid var(--refi-teal)' : '2px solid transparent',
             }}
           >
-            {t === 'store' ? 'APP STORE' : t === 'reviews' ? 'REVIEWS' : t === 'wallets' ? 'WALLETS' : t === 'networks' ? 'NETWORKS' : t === 'providers' ? 'AI PROVIDERS' : t === 'onboarding' ? 'ONBOARDING' : t === 'visibility' ? 'VISIBILITY' : t === 'infra' ? 'INFRASTRUCTURE' : t.toUpperCase()}
+            {t === 'store' ? 'APP STORE' : t === 'reviews' ? 'REVIEWS' : t === 'wallets' ? 'WALLETS' : t === 'networks' ? 'NETWORKS' : t === 'providers' ? 'AI PROVIDERS' : t === 'onboarding' ? 'ONBOARDING' : t === 'visibility' ? 'VISIBILITY' : t === 'infra' ? 'INFRASTRUCTURE' : t === 'downloads' ? 'DOWNLOADS' : t.toUpperCase()}
           </button>
         ))}
       </div>
 
       {/* Onboarding Funnel & Leads */}
       {tab === 'onboarding' && <OnboardingPanel headers={headers} onboardingStats={onboardingStats} setOnboardingStats={setOnboardingStats} leads={leads} setLeads={setLeads} />}
+
+      {tab === 'downloads' && <DownloadsPanel headers={headers} />}
 
       {tab === 'visibility' && <TabVisibilityPanel headers={headers} />}
 
@@ -1463,6 +1465,120 @@ PROVIDER_FALLBACK_CHAIN=bitnet,gemini,ollama,lmstudio,openrouter`}
 }
 
 
+/* ─── Downloads Panel ─── */
+
+function DownloadsPanel({ headers }: { headers: Record<string, string> }) {
+  const [stats, setStats] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    fetch(`${API_URL}/downloads/admin/stats`, { headers })
+      .then(r => r.ok ? r.json() : Promise.reject('Failed'))
+      .then(data => { setStats(data); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  const exportCSV = () => {
+    window.open(`${API_URL}/downloads/admin/export?token=${localStorage.getItem('refinet_token')}`, '_blank')
+  }
+
+  if (loading) return <p className="p-6 text-sm" style={{ color: 'var(--text-secondary)' }}>Loading download stats...</p>
+  if (!stats) return <p className="p-6 text-sm" style={{ color: 'var(--text-secondary)' }}>No download data available.</p>
+
+  return (
+    <div className="p-6 space-y-6">
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { label: 'Total Downloads', value: stats.total_downloads },
+          { label: 'Waitlist Signups', value: stats.total_waitlist },
+          { label: 'Total Leads', value: stats.total_downloads + stats.total_waitlist },
+          { label: 'Products', value: Object.keys(stats.by_product).length },
+        ].map((c) => (
+          <div key={c.label} className="p-4 rounded-xl" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)' }}>
+            <p className="text-[10px] font-mono uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>{c.label}</p>
+            <p className="text-2xl font-bold mt-1" style={{ color: 'var(--refi-teal)' }}>{c.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* By product */}
+      <div>
+        <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>By Product</h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {Object.entries(stats.by_product).map(([product, count]: [string, any]) => (
+            <div key={product} className="p-3 rounded-lg" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-xs font-mono capitalize" style={{ color: 'var(--text-secondary)' }}>{product}</p>
+              <p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{count}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* By platform */}
+      {Object.keys(stats.by_platform).length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>By Platform</h3>
+          <div className="flex gap-3 flex-wrap">
+            {Object.entries(stats.by_platform).map(([platform, count]: [string, any]) => (
+              <div key={platform} className="px-3 py-2 rounded-lg text-xs font-mono" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>{platform}: </span>
+                <span style={{ color: 'var(--text-primary)' }}>{count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Export + Leads table */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Recent Leads</h3>
+          <button onClick={exportCSV} className="px-3 py-1.5 rounded-lg text-[11px] font-mono"
+            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)', color: 'var(--refi-teal)' }}>
+            Export CSV
+          </button>
+        </div>
+        <div className="overflow-x-auto rounded-xl" style={{ border: '1px solid var(--border-default)' }}>
+          <table className="w-full text-xs font-mono" style={{ borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: 'var(--bg-secondary)' }}>
+                {['Name', 'Email', 'Product', 'Platform', 'Type', 'Date'].map((h) => (
+                  <th key={h} className="px-3 py-2 text-left font-semibold" style={{ color: 'var(--text-tertiary)', borderBottom: '1px solid var(--border-subtle)' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {stats.recent_leads.map((lead: any) => (
+                <tr key={lead.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                  <td className="px-3 py-2" style={{ color: 'var(--text-primary)' }}>{lead.name}</td>
+                  <td className="px-3 py-2" style={{ color: 'var(--text-secondary)' }}>{lead.email}</td>
+                  <td className="px-3 py-2 capitalize" style={{ color: 'var(--refi-teal)' }}>{lead.product}</td>
+                  <td className="px-3 py-2" style={{ color: 'var(--text-secondary)' }}>{lead.platform || '—'}</td>
+                  <td className="px-3 py-2">
+                    <span className="px-1.5 py-0.5 rounded text-[10px]" style={{
+                      background: lead.download_type === 'download' ? 'rgba(40,200,64,0.1)' : 'var(--refi-teal-glow)',
+                      color: lead.download_type === 'download' ? '#28C840' : 'var(--refi-teal)',
+                    }}>
+                      {lead.download_type}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2" style={{ color: 'var(--text-tertiary)' }}>{lead.created_at?.split('T')[0] || '—'}</td>
+                </tr>
+              ))}
+              {stats.recent_leads.length === 0 && (
+                <tr><td colSpan={6} className="px-3 py-6 text-center" style={{ color: 'var(--text-tertiary)' }}>No leads yet</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 /* ─── Onboarding Panel ─── */
 
 function OnboardingPanel({ headers, onboardingStats, setOnboardingStats, leads, setLeads }: {
@@ -1675,7 +1791,7 @@ const TAB_DEFS = [
   { key: 'help', label: 'Help Desk', section: 'Build' },
 ]
 
-function TabVisibilityPanel({ headers }: { headers: () => Record<string, string> }) {
+function TabVisibilityPanel({ headers }: { headers: Record<string, string> }) {
   const [tabs, setTabs] = useState<Record<string, boolean>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -1699,7 +1815,7 @@ function TabVisibilityPanel({ headers }: { headers: () => Record<string, string>
     setSaving(true); setError(''); setMsg('')
     try {
       const r = await fetch(`${API_URL}/admin/tab-visibility`, {
-        method: 'PUT', headers: headers(),
+        method: 'PUT', headers,
         body: JSON.stringify({ tabs }),
       })
       if (!r.ok) {

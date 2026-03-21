@@ -1,0 +1,5 @@
+c5fbb0027438cf9d6a521a98f78c3688d54fccea48af402f114d11e2e96cacb0  refinet-pillar-v0.3.0.tar.gz
+9910d398f75ea81b8617f967d8821e0c9e854db871253a358df0e7e3f7b82873  artifacts/refinet-pillar-setup.exe
+84c83a3ea9607b782eff1d6c89babee12ebd86291586c86d3b44637192d6e61e  artifacts/refinet-pillar.dmg
+f7085ee2b01adce82402ace5975a9f07f592a010e3cbfff8c8dfb541b1d54f6b  artifacts/refinet-pillar.deb
+90da2021ce1d6ece1c4421586cbf1fac4f4a7cca837c7908507b8cebdc7e6d47  artifacts/refinet-pillar.AppImage

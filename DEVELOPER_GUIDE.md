@@ -112,9 +112,24 @@ groot/
 │   └── tests/                     # 12 test files, 214 test cases
 │
 ├── frontend/                      # Next.js 14 frontend
-│   ├── app/                       # Page directories
+│   ├── app/                       # Page directories (25 routes)
+│   │   └── products/              # Product landing pages (5 pages)
+│   │       ├── page.tsx           # Products index — ecosystem overview
+│   │       ├── browser/page.tsx   # REFINET Browser (Coming Soon)
+│   │       ├── pillars/page.tsx   # REFINET Pillars (Available v0.3.0)
+│   │       ├── wizardos/page.tsx  # WizardOS (Coming Soon)
+│   │       └── cluster/page.tsx   # REFINET Cluster (Available)
 │   ├── components/                # Component directories
+│   │   ├── DownloadModal/         # Lead capture + download modal
+│   │   ├── AnimatedTerminal/      # Reusable animated terminal
+│   │   └── FeatureRow/            # Reusable feature row with terminal
+│   ├── hooks/                     # Shared React hooks
+│   │   └── useInView.ts           # IntersectionObserver for scroll animations
 │   └── lib/                       # API client, config, wallet
+│
+├── public-downloads/              # Product binaries served via Netlify
+│   ├── pillar/product/            # Pillars v0.3.0 (exe, dmg, AppImage, deb)
+│   └── cluster/product/           # Cluster setup script
 │
 ├── configs/                       # YAML configuration hierarchy
 │   ├── default.yaml               # Base settings (merged first)
@@ -354,6 +369,55 @@ python3 skills/refinet-platform-ops/scripts/health_check.py --email --always
 ### Adding a new execution script
 1. Create `scripts/<category>/my_script.py` with `SCRIPT_META` dict and `main()` function
 2. Scripts are auto-discovered by `script_runner.py` — no registration needed
+
+## Product Download System
+
+The platform hosts 4 downloadable products with a lead capture funnel.
+
+### Products
+
+| Product | Status | Downloads | Route |
+|---|---|---|---|
+| REFINET Browser | Coming Soon | — | `/products/browser/` |
+| REFINET Pillars | Available v0.3.0 | exe, dmg, AppImage, deb | `/products/pillars/` |
+| WizardOS | Coming Soon | — | `/products/wizardos/` |
+| REFINET Cluster | Available | Setup script | `/products/cluster/` |
+
+### Download API Endpoints
+
+| Method | Endpoint | Auth | Purpose |
+|---|---|---|---|
+| `POST` | `/downloads/register` | None (public) | Capture lead + return download URL |
+| `POST` | `/downloads/waitlist` | None (public) | Waitlist signup for unreleased products |
+| `GET` | `/downloads/products` | None (public) | Product catalog with availability |
+| `GET` | `/downloads/admin/stats` | Admin JWT | Download analytics |
+| `GET` | `/downloads/admin/export` | Admin JWT | CSV export of all leads |
+
+### Adding a New Product
+
+1. Add product entry to `PRODUCT_CATALOG` in `api/routes/downloads.py`
+2. Add product page at `frontend/app/products/<name>/page.tsx`
+3. Update `products.json` with metadata and download URLs
+4. Place binaries in `public-downloads/<name>/product/`
+5. Add nav link to sidebar in `frontend/app/client-layout.tsx`
+
+### Lead Tracking
+
+All download/waitlist signups are stored in the `download_leads` table with:
+- Name, email, wallet address (auto-pulled if connected)
+- Product, platform, version, referrer
+- SHA-256 IP hash for dedup
+- 384-dim semantic embedding for GROOT reasoning
+- Event bus events: `download.registered`, `download.waitlist`
+
+Admin dashboard "DOWNLOADS" tab shows per-product stats, platform breakdown, and CSV export.
+
+### Netlify Deployment
+
+The site deploys to Netlify via `netlify.toml`:
+- Build: `cd frontend && npm install && npm run build`
+- Product binaries copied from `public-downloads/` to `frontend/public/public-downloads/` at build time
+- DNS: `www.refinet.io` → Netlify, `api.refinet.io` → Oracle Cloud
 
 ## Testing
 

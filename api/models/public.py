@@ -586,3 +586,24 @@ class TicketMessage(PublicBase):
     content = Column(Text, nullable=False)
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class DownloadLead(PublicBase):
+    """Tracks product download leads and waitlist signups for analytics."""
+    __tablename__ = "download_leads"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    name = Column(String, nullable=False)
+    email = Column(String, nullable=False, index=True)
+    eth_address = Column(String, nullable=True)
+    product = Column(String, nullable=False, index=True)      # browser|pillars|wizardos|cluster
+    platform = Column(String, nullable=True)                   # windows|macos|linux|debian
+    version = Column(String, nullable=True)
+    user_id = Column(String, nullable=True)                    # linked if logged in (no FK)
+    referrer = Column(String, nullable=True)
+    ip_hash = Column(String, nullable=True)                    # SHA-256 of IP for dedup
+    user_agent = Column(String, nullable=True)
+    marketing_consent = Column(Boolean, default=False)
+    download_type = Column(String, default="download")         # download|waitlist
+    embedding_json = Column(Text, nullable=True)               # 384-dim vector JSON
+    created_at = Column(DateTime, server_default=func.now())

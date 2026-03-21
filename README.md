@@ -21,6 +21,19 @@ Groot is augmented with two knowledge systems:
   - **Execute** — call view/pure functions on-chain to read state (autonomous, no gas)
   - **Act** — request state-changing transactions (creates PendingAction for master_admin approval)
 
+## Products
+
+REFINET Cloud ships 4 downloadable products — all open source, all free.
+
+| Product | Description | Status |
+|---|---|---|
+| [REFINET Browser](https://github.com/circularityglobal/REFINET-BROWSER) | Privacy browser with decentralized DNS, encrypted transit, and GROOT AI sidebar | Coming Soon |
+| [REFINET Pillars](https://github.com/circularityglobal/REFINET-PILLARS) | Sovereign infrastructure: encrypted mesh, anonymized routing, Gopher protocol, vault | **Available v0.3.0** |
+| [WizardOS](https://github.com/circularityglobal/CIFI-WIZARDOS) | Desktop AI OS powered by GROOT — agents, personalities, local memory | Coming Soon |
+| REFINET Cluster | Distributed GROOT nodes on Oracle Cloud ARM (Always Free tier) | **Available** |
+
+Product pages at `www.refinet.io/products/`. Downloads require name + email (lead capture), wallet address auto-pulled if connected. All leads stored with 384-dim semantic embeddings for analytics.
+
 ## Platform Features
 
 ### AI Inference (Multi-Provider)

@@ -157,6 +157,9 @@ async def lifespan(app: FastAPI):
     # Support events — ticket lifecycle → WS + webhooks
     bus.subscribe("support.*", ws_manager.broadcast_event)
     bus.subscribe("support.*", deliver_bus_event)
+    # Download events — lead capture + waitlist → WS + webhooks
+    bus.subscribe("download.*", ws_manager.broadcast_event)
+    bus.subscribe("download.*", deliver_bus_event)
     # Trigger router — maps events to agent tasks automatically
     from api.services.trigger_router import register_all_triggers
     register_all_triggers(bus)
@@ -339,6 +342,10 @@ def create_app() -> FastAPI:
     # ── App Store Routes (has {slug:path} catch-all — must be LAST /apps router) ──
     from api.routes.app_store import router as app_store_router
     app.include_router(app_store_router)
+
+    # ── Downloads / Lead Capture ──────────────────────────────────
+    from api.routes.downloads import router as downloads_router
+    app.include_router(downloads_router)
 
     # ── WebSocket Routes ─────────────────────────────────────────
     from api.routes.mcp_websocket import router as ws_router

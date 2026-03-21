@@ -8,6 +8,7 @@ from api.models.public import (  # noqa: F401
     AppListing, AppReview, AppInstall,
     AppSubmission, SubmissionNote,
     SupportTicket, TicketMessage,
+    DownloadLead,
 )
 from api.models.internal import (  # noqa: F401
     ServerSecret, RoleAssignment, AdminAuditLog,

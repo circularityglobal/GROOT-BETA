@@ -186,27 +186,36 @@ export default function PanelAgentOS({ isActive }: PanelAgentOSProps) {
             ))}
           </motion.div>
 
-          {/* Footer bar */}
+          {/* Learn More + Footer bar */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={animate ? { opacity: 1 } : {}}
             transition={{ delay: 1.2, duration: 0.4 }}
-            className="flex flex-col md:flex-row items-center justify-between gap-3 max-w-4xl mx-auto pt-4"
+            className="max-w-4xl mx-auto pt-4"
             style={{ borderTop: '1px solid var(--border-subtle)' }}
           >
-            <div className="flex items-center gap-2">
-              <img src="/refi-logo.png" alt="" className="w-4 h-4" />
-              <span className="text-[11px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
-                REFINET Cloud · Sovereign Infrastructure for a Regenerative Internet
-              </span>
-            </div>
-            <div className="flex items-center gap-4 text-[11px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
-              <span className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--success)' }} />
-                1 node
-              </span>
-              <span>BitNet CPU</span>
-              <span>AGPL-3.0</span>
+            <div className="flex flex-col md:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <img src="/refi-logo.png" alt="" className="w-4 h-4" />
+                <span className="text-[11px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
+                  REFINET Cloud · Sovereign Infrastructure for a Regenerative Internet
+                </span>
+              </div>
+              <div className="flex items-center gap-4">
+                <a href="/products/wizardos/" className="inline-flex items-center gap-1.5 text-[11px] font-mono font-semibold transition-all hover:gap-2"
+                  style={{ color: 'var(--refi-teal)', textDecoration: 'none' }}>
+                  WizardOS
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
+                </a>
+                <div className="flex items-center gap-4 text-[11px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--success)' }} />
+                    1 node
+                  </span>
+                  <span>BitNet CPU</span>
+                  <span>AGPL-3.0</span>
+                </div>
+              </div>
             </div>
           </motion.div>
         </div>

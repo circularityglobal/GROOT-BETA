@@ -4,6 +4,37 @@ All notable changes to REFINET Cloud are documented in this file.
 
 ---
 
+## [3.8.0] — 2026-03-20
+
+### Added — Product Download System & Marketing Pages
+- **Product pages**: 5 new routes (`/products/`, `/products/browser/`, `/products/pillars/`, `/products/wizardos/`, `/products/cluster/`) with premium landing design
+- **Download lead capture API**: `POST /downloads/register` (public), `POST /downloads/waitlist` (public), `GET /downloads/products` (public catalog), `GET /downloads/admin/stats` (admin analytics), `GET /downloads/admin/export` (CSV export)
+- **DownloadLead model**: `download_leads` table in public.db — tracks name, email, wallet, product, platform, referrer, IP hash, marketing consent, 384-dim semantic embeddings
+- **DownloadModal component**: Two-mode popup (download / waitlist) with platform auto-detection, installation instructions, wallet address auto-pull, form validation
+- **Lead analytics**: Admin dashboard "DOWNLOADS" tab with per-product stats, platform breakdown, lead table, CSV export
+- **Semantic embeddings**: Download events embedded via sentence-transformers (384-dim) and stored for GROOT reasoning
+- **Event bus**: `download.registered` and `download.waitlist` events published for real-time WS + webhook delivery
+- **Netlify deployment**: `netlify.toml` with build config, SPA routing, security headers (HSTS, X-Frame-Options, CSP), binary caching
+- **CORS**: Added `www.refinet.io`, `refinet.io`, `app.refinet.io` to production origins
+- **Products in navbar**: PublicNavBar shows Browser/Pillars/WizardOS/Cluster links; AppShell sidebar has "Products" section with tab visibility gating
+- **Pillars v0.3.0 assets**: Downloaded and served from `public-downloads/pillar/product/` (exe, dmg, AppImage, deb, tar.gz)
+- **products.json**: Expanded from 2 to 4 products with download URLs and availability metadata
+
+### Added — Shared Frontend Components (Performance Optimization)
+- `frontend/hooks/useInView.ts` — Shared IntersectionObserver hook for scroll-triggered animations (extracted from 4 product pages)
+- `frontend/components/AnimatedTerminal/` — Reusable animated terminal with configurable lines, timing, and cleanup
+- `frontend/components/FeatureRow/` — Reusable alternating feature row with terminal snippet and scroll-reveal
+- **Lazy loading**: MatrixRain and DownloadModal loaded via `next/dynamic` with `ssr: false` — reduces initial JS bundle
+- **Timer cleanup**: All setTimeout/setInterval refs properly cleaned on unmount
+
+### Fixed
+- **TabVisibilityPanel type error**: Fixed pre-existing type mismatch (`headers` prop declared as function but received as object) in admin page
+- **Event bus async**: Fixed `_try_publish_event` in downloads route to use `asyncio.get_running_loop().create_task()` for proper async event publishing
+- **Input validation**: Added `max_length` constraints to `referrer` (2048) and `eth_address` (42) in download schemas
+- **DownloadModal cleanup**: Download trigger `setTimeout` now stores ref and clears on modal close/unmount
+
+---
+
 ## [3.7.0] — 2026-03-20
 
 ### Added — SDK Gateway Skill (LLM-Free Contract Access)

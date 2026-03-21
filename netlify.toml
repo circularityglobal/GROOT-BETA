@@ -1,0 +1,61 @@
+# REFINET Cloud — Netlify Deployment Configuration
+# Serves www.refinet.io and app.refinet.io from the same build
+
+[build]
+  base = "frontend"
+  command = "mkdir -p public/public-downloads/pillar/product public/public-downloads/cluster/product && cp -r ../public-downloads/pillar/product/CHECKSUMS.txt public/public-downloads/pillar/product/ 2>/dev/null || true && gh release download v0.3.0 --repo circularityglobal/REFINET-PILLARS --dir public/public-downloads/pillar/product/ 2>/dev/null || echo 'Pillars binaries not available — skipping' && npm install && npm run build"
+  publish = "out"
+
+[build.environment]
+  NEXT_PUBLIC_API_URL = "https://api.refinet.io"
+  NODE_VERSION = "18"
+
+# Serve product download binaries from public-downloads/
+[[redirects]]
+  from = "/public-downloads/*"
+  to = "/public-downloads/:splat"
+  status = 200
+
+# SPA fallback for client-side routing (must be last redirect rule)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Cache download binaries (24 hours)
+[[headers]]
+  for = "/public-downloads/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"
+
+# Cache Next.js static assets (immutable — hashed filenames)
+[[headers]]
+  for = "/_next/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Cache fonts and images
+[[headers]]
+  for = "*.woff2"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "*.png"
+  [headers.values]
+    Cache-Control = "public, max-age=2592000"
+
+[[headers]]
+  for = "*.svg"
+  [headers.values]
+    Cache-Control = "public, max-age=2592000"
+
+# Security headers for all pages
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"

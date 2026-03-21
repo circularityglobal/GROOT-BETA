@@ -114,7 +114,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   }, [isLoggedIn, hydrated])
 
   // Routes that don't require authentication
-  const PUBLIC_ROUTES = ['/', '/login', '/settings', '/chat', '/docs', '/store', '/explore', '/registry', '/u', '/network']
+  const PUBLIC_ROUTES = ['/', '/login', '/settings', '/chat', '/docs', '/store', '/explore', '/registry', '/u', '/network', '/products']
   const isLoginPage = pathname === '/login' || pathname === '/login/' || pathname === '/settings' || pathname === '/settings/'
   const isPublicRoute = PUBLIC_ROUTES.some(r =>
     r === '/' ? pathname === '/' : (pathname === r || pathname === r + '/' || pathname.startsWith(r + '/'))
@@ -557,6 +557,18 @@ function AppShell({ children }: { children: React.ReactNode }) {
             {isTabVisible('payments') && <SidebarItem href="/payments/" icon={<DashboardIcon />} label="Payments" active={isActive('/payments')} collapsed={collapsed} />}
             {isTabVisible('help') && <SidebarItem href="/help/" icon={<HelpDeskIcon />} label="Help Desk" active={isActive('/help')} collapsed={collapsed} />}
             <SidebarButton icon={<DocsIcon />} label="API Docs" active={docsOpen} collapsed={collapsed} onClick={() => setDocsOpen(true)} />
+
+            <div style={{ height: 4 }} />
+            {!collapsed && (
+              <div style={{ padding: '8px 12px 4px', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-tertiary)' }}>
+                Products
+              </div>
+            )}
+
+            {isTabVisible('products') && <SidebarItem href="/products/browser/" icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg>} label="Browser" active={isActive('/products/browser')} collapsed={collapsed} />}
+            {isTabVisible('products') && <SidebarItem href="/products/pillars/" icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" /></svg>} label="Pillars" active={isActive('/products/pillars')} collapsed={collapsed} />}
+            {isTabVisible('products') && <SidebarItem href="/products/wizardos/" icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>} label="WizardOS" active={isActive('/products/wizardos')} collapsed={collapsed} />}
+            {isTabVisible('products') && <SidebarItem href="/products/cluster/" icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" /><line x1="6" y1="6" x2="6.01" y2="6" /><line x1="6" y1="18" x2="6.01" y2="18" /></svg>} label="Cluster" active={isActive('/products/cluster')} collapsed={collapsed} />}
           </nav>
 
           {/* Bottom section */}
@@ -599,7 +611,27 @@ function PublicNavBar({ hydrated }: { hydrated: boolean }) {
             REFINET<span style={{ color: 'var(--refi-teal)' }}> Cloud</span>
           </span>
         </Link>
+
+        {/* Product links — visible on md+ */}
+        <div className="hidden md:flex items-center gap-5">
+          {[
+            { href: '/products/browser/', label: 'Browser' },
+            { href: '/products/pillars/', label: 'Pillars' },
+            { href: '/products/wizardos/', label: 'WizardOS' },
+            { href: '/products/cluster/', label: 'Cluster' },
+          ].map((p) => (
+            <Link key={p.href} href={p.href} className="text-[12px] font-mono transition-colors hover:opacity-80"
+              style={{ color: 'var(--text-secondary)', textDecoration: 'none' }}>
+              {p.label}
+            </Link>
+          ))}
+        </div>
+
         <div className="flex items-center gap-2">
+          <Link href="/products/" className="hidden sm:inline-flex text-[12px] font-mono px-3 py-1.5 rounded-lg transition-colors"
+            style={{ color: 'var(--refi-teal)', textDecoration: 'none', border: '1px solid rgba(92,224,210,0.2)' }}>
+            Products
+          </Link>
           <Link href="/login/" prefetch={true} className="btn-primary !py-1.5 !px-4 !text-xs !rounded-lg" style={{ textDecoration: 'none' }}>
             Get Started
           </Link>

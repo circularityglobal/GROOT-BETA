@@ -166,22 +166,22 @@ export default function PanelBrowser({ isActive }: PanelBrowserProps) {
             </div>
           </div>
 
-          {/* Coming Soon badge */}
+          {/* Learn More CTA */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={animate ? { opacity: 1 } : {}}
             transition={{ delay: 1, duration: 0.4 }}
             className="text-center mt-8"
           >
-            <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full font-mono text-[12px]"
+            <a href="/products/browser/" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-mono text-[12px] font-semibold transition-all hover:gap-3"
               style={{
-                border: '1px solid rgba(92,224,210,0.2)',
-                color: 'var(--refi-teal)',
-                background: 'rgba(92,224,210,0.05)',
+                background: 'var(--refi-teal)',
+                color: 'var(--bg-primary)',
+                textDecoration: 'none',
               }}>
-              <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--refi-teal)' }} />
-              Coming Soon — Join the Waitlist
-            </span>
+              Learn More
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
+            </a>
           </motion.div>
         </div>
       </div>

@@ -57,3 +57,11 @@ memory/working/*.json
 memory/episodic/*.jsonl
 memory/semantic/*.json
 memory/procedural/*.json
+
+# Product download binaries (too large for git — downloaded at build time)
+public-downloads/pillar/product/*.exe
+public-downloads/pillar/product/*.dmg
+public-downloads/pillar/product/*.AppImage
+public-downloads/pillar/product/*.deb
+public-downloads/pillar/product/*.tar.gz
+public-downloads/cluster/product/*.sh

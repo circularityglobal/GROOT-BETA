@@ -1,22 +1,62 @@
 {
   "products": [
     {
-      "name": "pillars",
-      "subdomain": "infrastructure.refinet.io",
-      "repo": "",
+      "name": "browser",
+      "display_name": "REFINET Browser",
+      "tagline": "Sovereign Internet Access",
+      "description": "Privacy browser routing through Pillars with GROOT AI sidebar",
+      "subdomain": "browser.refinet.io",
+      "repo": "https://github.com/circularityglobal/REFINET-BROWSER",
       "branch": "main",
       "build_cmd": "npm run build",
       "out_dir": "out",
-      "description": "REFINET Pillars — Gopher servers with REFINET infrastructure"
+      "available": false,
+      "downloads": {}
     },
     {
-      "name": "browser",
-      "subdomain": "browser.refinet.io",
-      "repo": "",
+      "name": "pillars",
+      "display_name": "REFINET Pillars",
+      "tagline": "Sovereign Infrastructure",
+      "description": "Permissionless mesh networking, proxy routing, encrypted vault",
+      "subdomain": "infrastructure.refinet.io",
+      "repo": "https://github.com/circularityglobal/REFINET-PILLARS",
       "branch": "main",
       "build_cmd": "npm run build",
       "out_dir": "out",
-      "description": "REFINET Browser — Sovereign internet access via REFINET Pillars"
+      "available": true,
+      "version": "0.3.0",
+      "downloads": {
+        "windows": "/public-downloads/pillar/product/refinet-pillar-setup.exe",
+        "macos": "/public-downloads/pillar/product/refinet-pillar.dmg",
+        "linux": "/public-downloads/pillar/product/refinet-pillar.AppImage",
+        "debian": "/public-downloads/pillar/product/refinet-pillar.deb"
+      }
+    },
+    {
+      "name": "wizardos",
+      "display_name": "WizardOS",
+      "tagline": "Sovereign AI Desktop",
+      "description": "Desktop AI operating system powered by GROOT — sovereign inference at zero cost",
+      "repo": "https://github.com/circularityglobal/CIFI-WIZARDOS",
+      "branch": "main",
+      "build_cmd": "npm run build",
+      "out_dir": "out",
+      "available": false,
+      "downloads": {}
+    },
+    {
+      "name": "cluster",
+      "display_name": "REFINET Cluster",
+      "tagline": "Distributed Compute",
+      "description": "Run a GROOT node on Oracle Cloud ARM — add compute to the sovereign network",
+      "repo": "",
+      "branch": "main",
+      "build_cmd": "",
+      "out_dir": "",
+      "available": true,
+      "downloads": {
+        "linux": "/public-downloads/cluster/product/cluster_setup.sh"
+      }
     }
   ]
 }
