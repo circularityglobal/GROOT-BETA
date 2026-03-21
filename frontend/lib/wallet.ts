@@ -8,11 +8,30 @@
  */
 
 import { http, createConfig, createStorage, cookieStorage } from 'wagmi'
-import { mainnet, polygon, arbitrum, optimism, base, sepolia } from 'wagmi/chains'
+import { defineChain } from 'viem'
+import { mainnet, polygon, arbitrum, optimism, base, sepolia, avalancheFuji } from 'wagmi/chains'
 import { injected, coinbaseWallet } from 'wagmi/connectors'
 
+// XDC Network (Mainnet) — chain ID 50
+export const xdc = defineChain({
+  id: 50,
+  name: 'XDC Network',
+  nativeCurrency: { name: 'XDC', symbol: 'XDC', decimals: 18 },
+  rpcUrls: {
+    default: { http: ['https://rpc.xinfin.network'] },
+  },
+  blockExplorers: {
+    default: { name: 'XDC Explorer', url: 'https://explorer.xinfin.network' },
+  },
+})
+
 // Chains supported by REFINET Cloud SIWE authentication
-export const supportedChains = [mainnet, polygon, arbitrum, optimism, base, sepolia] as const
+// XDC mainnet is primary, Avalanche Fuji for testing
+export const supportedChains = [xdc, avalancheFuji, mainnet, polygon, arbitrum, optimism, base, sepolia] as const
+
+// Default chain for SIWE auth — Avalanche Fuji for testing, XDC for production
+export const DEFAULT_CHAIN_ID = 43113 // Avalanche Fuji (testing)
+// export const DEFAULT_CHAIN_ID = 50 // XDC Network (production)
 
 /**
  * Wallet provider configuration — stored in localStorage by admin dashboard.
@@ -89,12 +108,8 @@ function buildConnectors() {
     }
 
     // WalletConnect v2 — lazy import to avoid SSR crashes and missing-dep crashes.
-    // The walletConnect connector requires @walletconnect/ethereum-provider.
-    // If not installed or in SSR, we skip it gracefully.
     if (config.walletConnect && config.walletConnectProjectId && typeof window !== 'undefined') {
       try {
-        // Dynamic require within try/catch — if @walletconnect/ethereum-provider
-        // is not installed, this fails silently and WalletConnect is unavailable.
         const { walletConnect } = require('wagmi/connectors')
         connectors.push(
           walletConnect({
@@ -109,17 +124,13 @@ function buildConnectors() {
           })
         )
       } catch {
-        // WalletConnect dependencies not available — skip silently
         console.warn('[REFINET] WalletConnect connector unavailable — install @walletconnect/ethereum-provider to enable')
       }
     }
   } catch {
-    // Absolute safety net — if anything goes wrong building connectors,
-    // fall back to injected-only so the app still boots
     return [injected({ shimDisconnect: true })]
   }
 
-  // Must have at least one connector or wagmi crashes
   if (connectors.length === 0) {
     connectors.push(injected({ shimDisconnect: true }))
   }
@@ -127,8 +138,7 @@ function buildConnectors() {
   return connectors
 }
 
-// Create wagmi config — wrapped in safety net.
-// If this fails, the app cannot boot, so we defend aggressively.
+// Create wagmi config
 function createWagmiConfig() {
   try {
     return createConfig({
@@ -139,6 +149,8 @@ function createWagmiConfig() {
       }),
       ssr: true,
       transports: {
+        [xdc.id]: http(),
+        [avalancheFuji.id]: http(),
         [mainnet.id]: http(),
         [polygon.id]: http(),
         [arbitrum.id]: http(),
@@ -148,7 +160,6 @@ function createWagmiConfig() {
       },
     })
   } catch (e) {
-    // Last-resort fallback — minimal config with just injected wallet
     console.error('[REFINET] Failed to create wagmi config, using minimal fallback:', e)
     return createConfig({
       chains: supportedChains,
@@ -158,6 +169,8 @@ function createWagmiConfig() {
       }),
       ssr: true,
       transports: {
+        [xdc.id]: http(),
+        [avalancheFuji.id]: http(),
         [mainnet.id]: http(),
         [polygon.id]: http(),
         [arbitrum.id]: http(),

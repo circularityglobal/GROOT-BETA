@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     # Rate limits
     rate_limit_per_minute: int = Field(default=60, alias="RATE_LIMIT_PER_MINUTE")
     free_tier_daily_requests: int = Field(default=250, alias="FREE_TIER_DAILY_REQUESTS")
+    max_daily_limit_per_key: int = Field(default=250, alias="MAX_DAILY_LIMIT_PER_KEY")
     max_request_body_bytes: int = Field(default=10485760, alias="MAX_REQUEST_BODY_BYTES")
 
     # Anonymous (unauthenticated) inference limits
@@ -100,6 +101,13 @@ class Settings(BaseSettings):
 
     # Wallet identity
     wallet_email_domain: str = Field(default="cifi.global", alias="WALLET_EMAIL_DOMAIN")
+
+    # CIFI Federation
+    cifi_api_url: str = Field(
+        default="https://api.cifi.finance/functions/v1",
+        alias="CIFI_API_URL",
+    )
+    cifi_partner_api_key: str = Field(default="", alias="CIFI_PARTNER_API_KEY")
 
     # SMTP bridge
     smtp_host: str = Field(default="127.0.0.1", alias="SMTP_HOST")
@@ -138,6 +146,8 @@ class Settings(BaseSettings):
             self.refinet_frontend_url,
             "http://localhost:4000",
             "http://127.0.0.1:4000",
+            "http://localhost:4001",
+            "http://127.0.0.1:4001",
         ]
 
 

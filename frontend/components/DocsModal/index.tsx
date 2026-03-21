@@ -255,7 +255,7 @@ export default function DocsModal({ open, onClose }: { open: boolean; onClose: (
           <div className="docs-sidebar-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
               <div className="docs-logo-circle">
-                <img src="/refi-logo.png" alt="" style={{ width: 22, height: 22, borderRadius: '50%' }} />
+                <img src="/refi-logo.png" alt="" style={{ width: 22, height: 22 }} />
               </div>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.02em' }}>

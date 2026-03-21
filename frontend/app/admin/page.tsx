@@ -12,7 +12,7 @@ export default function AdminPage() {
   const [secrets, setSecrets] = useState<any[]>([])
   const [storeApps, setStoreApps] = useState<any[]>([])
   const [storeStats, setStoreStats] = useState<any>(null)
-  const [tab, setTab] = useState<'stats' | 'users' | 'audit' | 'mcp' | 'secrets' | 'store' | 'reviews' | 'wallets' | 'networks' | 'providers' | 'onboarding'>('stats')
+  const [tab, setTab] = useState<'stats' | 'users' | 'audit' | 'mcp' | 'secrets' | 'store' | 'reviews' | 'wallets' | 'networks' | 'providers' | 'onboarding' | 'visibility' | 'infra'>('stats')
   const [onboardingStats, setOnboardingStats] = useState<any>(null)
   const [leads, setLeads] = useState<any[]>([])
   const [error, setError] = useState('')
@@ -220,7 +220,7 @@ export default function AdminPage() {
     )
   }
 
-  const tabs = ['stats', 'onboarding', 'users', 'reviews', 'store', 'providers', 'wallets', 'networks', 'audit', 'mcp', 'secrets'] as const
+  const tabs = ['stats', 'onboarding', 'users', 'reviews', 'store', 'providers', 'wallets', 'networks', 'infra', 'audit', 'mcp', 'secrets', 'visibility'] as const
 
   return (
     <div className="max-w-6xl mx-auto py-10 px-6">
@@ -238,13 +238,17 @@ export default function AdminPage() {
               borderBottom: tab === t ? '2px solid var(--refi-teal)' : '2px solid transparent',
             }}
           >
-            {t === 'store' ? 'APP STORE' : t === 'reviews' ? 'REVIEWS' : t === 'wallets' ? 'WALLETS' : t === 'networks' ? 'NETWORKS' : t === 'providers' ? 'AI PROVIDERS' : t === 'onboarding' ? 'ONBOARDING' : t.toUpperCase()}
+            {t === 'store' ? 'APP STORE' : t === 'reviews' ? 'REVIEWS' : t === 'wallets' ? 'WALLETS' : t === 'networks' ? 'NETWORKS' : t === 'providers' ? 'AI PROVIDERS' : t === 'onboarding' ? 'ONBOARDING' : t === 'visibility' ? 'VISIBILITY' : t === 'infra' ? 'INFRASTRUCTURE' : t.toUpperCase()}
           </button>
         ))}
       </div>
 
       {/* Onboarding Funnel & Leads */}
       {tab === 'onboarding' && <OnboardingPanel headers={headers} onboardingStats={onboardingStats} setOnboardingStats={setOnboardingStats} leads={leads} setLeads={setLeads} />}
+
+      {tab === 'visibility' && <TabVisibilityPanel headers={headers} />}
+
+      {tab === 'infra' && <InfraPanel />}
 
       {/* Stats */}
       {tab === 'stats' && stats && (
@@ -1641,6 +1645,359 @@ function FunnelCard({ label, value, pct, color }: { label: string; value: number
       <div className="text-[11px] uppercase font-medium mb-1" style={{ color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>{label}</div>
       <div className="text-xl font-bold" style={{ color, letterSpacing: '-0.02em' }}>{value || 0}</div>
       <div className="text-[10px] mt-1" style={{ color: 'var(--text-tertiary)', fontFamily: "'JetBrains Mono', monospace" }}>{pct || 0}%</div>
+    </div>
+  )
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   TAB VISIBILITY PANEL
+   Master admin controls which tabs are visible to platform users.
+   ═══════════════════════════════════════════════════════════════════ */
+
+const TAB_DEFS = [
+  { key: 'dashboard', label: 'Dashboard', section: 'Core' },
+  { key: 'chat', label: 'Chat', section: 'Core' },
+  { key: 'agents', label: 'Agents', section: 'Core' },
+  { key: 'knowledge', label: 'Knowledge', section: 'Core' },
+  { key: 'devices', label: 'Devices', section: 'Core' },
+  { key: 'messages', label: 'Messages', section: 'Core' },
+  { key: 'network', label: 'Network', section: 'Core' },
+  { key: 'pipeline', label: 'Wizard / Pipeline', section: 'Build' },
+  { key: 'deployments', label: 'Deployments', section: 'Build' },
+  { key: 'dapp', label: 'DApp Factory', section: 'Build' },
+  { key: 'projects', label: 'Projects', section: 'Build' },
+  { key: 'explore', label: 'Registry', section: 'Build' },
+  { key: 'store', label: 'App Store', section: 'Build' },
+  { key: 'repo', label: 'Repositories', section: 'Build' },
+  { key: 'webhooks', label: 'Webhooks', section: 'Build' },
+  { key: 'payments', label: 'Payments', section: 'Build' },
+  { key: 'help', label: 'Help Desk', section: 'Build' },
+]
+
+function TabVisibilityPanel({ headers }: { headers: () => Record<string, string> }) {
+  const [tabs, setTabs] = useState<Record<string, boolean>>({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    fetch(`${API_URL}/admin/tab-visibility`)
+      .then(r => r.ok ? r.json() : { tabs: {} })
+      .then(d => { setTabs(d.tabs || {}); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  const toggle = (key: string) => {
+    if (key === 'admin' || key === 'dashboard') return // Never disable admin or dashboard
+    setTabs(prev => ({ ...prev, [key]: !prev[key] }))
+    setMsg('')
+  }
+
+  const save = async () => {
+    setSaving(true); setError(''); setMsg('')
+    try {
+      const r = await fetch(`${API_URL}/admin/tab-visibility`, {
+        method: 'PUT', headers: headers(),
+        body: JSON.stringify({ tabs }),
+      })
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}))
+        throw new Error(e.detail || 'Failed to save')
+      }
+      setMsg('Tab visibility updated. Changes are live.')
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) return <div className="text-sm" style={{ color: 'var(--text-tertiary)' }}>Loading visibility settings...</div>
+
+  const enabledCount = TAB_DEFS.filter(t => tabs[t.key] !== false).length
+  const disabledCount = TAB_DEFS.length - enabledCount
+
+  return (
+    <div>
+      <div className="mb-4">
+        <h2 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Tab Visibility Controls</h2>
+        <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+          Control which tabs are visible to platform users. Disabled tabs are hidden from the sidebar and blocked at the API level. Only master_admin can see and access disabled features.
+        </p>
+      </div>
+
+      {error && <div className="mb-3 p-3 rounded-lg text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#EF4444' }}>{error}</div>}
+      {msg && <div className="mb-3 p-3 rounded-lg text-xs" style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', color: '#22C55E' }}>{msg}</div>}
+
+      <div className="mb-4 flex gap-4 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+        <span>Enabled: <strong style={{ color: 'var(--refi-teal)' }}>{enabledCount}</strong></span>
+        <span>Disabled: <strong style={{ color: '#EF4444' }}>{disabledCount}</strong></span>
+      </div>
+
+      {['Core', 'Build'].map(section => (
+        <div key={section} className="mb-6">
+          <div className="text-[10px] uppercase font-semibold mb-2" style={{ color: 'var(--text-tertiary)', letterSpacing: '0.08em' }}>{section}</div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+            {TAB_DEFS.filter(t => t.section === section).map(t => {
+              const enabled = tabs[t.key] !== false
+              const isLocked = t.key === 'dashboard'
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => toggle(t.key)}
+                  disabled={isLocked}
+                  className="card text-left transition-all"
+                  style={{
+                    padding: '10px 14px',
+                    opacity: enabled ? 1 : 0.5,
+                    borderColor: enabled ? 'var(--border-default)' : 'rgba(239,68,68,0.3)',
+                    cursor: isLocked ? 'default' : 'pointer',
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium" style={{ color: enabled ? 'var(--text-primary)' : 'var(--text-tertiary)', textDecoration: enabled ? 'none' : 'line-through' }}>
+                      {t.label}
+                    </span>
+                    <div
+                      style={{
+                        width: 32, height: 18, borderRadius: 9, padding: 2,
+                        background: enabled ? 'var(--refi-teal)' : 'var(--bg-tertiary)',
+                        transition: 'background 0.2s',
+                        display: 'flex', alignItems: 'center',
+                        justifyContent: enabled ? 'flex-end' : 'flex-start',
+                      }}
+                    >
+                      <div style={{ width: 14, height: 14, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }} />
+                    </div>
+                  </div>
+                  <div className="text-[10px] mt-1" style={{ color: 'var(--text-tertiary)', fontFamily: "'JetBrains Mono', monospace" }}>
+                    {isLocked ? 'always on' : enabled ? 'visible' : 'hidden'}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+
+      <div className="flex items-center justify-between mt-4 pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <p className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          Disabled tabs are hidden from all users except master_admin. Backend API routes are also blocked.
+        </p>
+        <button
+          onClick={save}
+          disabled={saving}
+          className="btn-primary px-5 py-2 text-xs font-semibold rounded-lg"
+          style={{ opacity: saving ? 0.6 : 1 }}
+        >
+          {saving ? 'Saving...' : 'Save Changes'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   INFRASTRUCTURE PANEL
+   Manage Oracle Cloud instances and server nodes.
+   ═══════════════════════════════════════════════════════════════════ */
+
+const PROVIDERS = ['oracle_cloud', 'aws', 'gcp', 'hetzner', 'bare_metal']
+const ROLES = ['primary', 'worker', 'bitnet', 'database', 'gateway']
+const NODE_STATUSES = ['provisioning', 'online', 'degraded', 'offline', 'terminated']
+const STATUS_CLR: Record<string, string> = { online: '#22C55E', degraded: '#F59E0B', offline: '#EF4444', provisioning: '#3B82F6', terminated: '#6B7280' }
+const HEALTH_CLR: Record<string, string> = { healthy: '#22C55E', unhealthy: '#EF4444', timeout: '#F59E0B' }
+
+function InfraPanel() {
+  const [nodes, setNodes] = useState<any[]>([])
+  const [stats, setStats] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [showAdd, setShowAdd] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [error, setError] = useState('')
+  const [checking, setChecking] = useState<string | null>(null)
+
+  // Add form
+  const [form, setForm] = useState({
+    name: '', provider: 'oracle_cloud', region: '', instance_type: '', instance_id: '',
+    compartment_id: '', public_ip: '', private_ip: '', ssh_port: '22',
+    cpu_count: '', memory_gb: '', disk_gb: '', role: 'worker',
+    services: '', api_endpoint: '', notes: '',
+  })
+
+  const headers: any = { 'Content-Type': 'application/json' }
+  const token = typeof window !== 'undefined' ? localStorage.getItem('refinet_token') : null
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const fetchNodes = async () => {
+    try {
+      const [nr, sr] = await Promise.all([
+        fetch(`${API_URL}/admin/infrastructure/nodes`, { headers }),
+        fetch(`${API_URL}/admin/infrastructure/stats`, { headers }),
+      ])
+      if (nr.ok) setNodes(await nr.json())
+      if (sr.ok) setStats(await sr.json())
+    } catch {}
+    setLoading(false)
+  }
+
+  useEffect(() => { fetchNodes() }, [])
+
+  const addNode = async () => {
+    if (!form.name.trim()) { setError('Name is required'); return }
+    setError(''); setMsg('')
+    try {
+      const body: any = { ...form }
+      body.ssh_port = parseInt(form.ssh_port) || 22
+      if (form.cpu_count) body.cpu_count = parseInt(form.cpu_count)
+      if (form.memory_gb) body.memory_gb = parseInt(form.memory_gb)
+      if (form.disk_gb) body.disk_gb = parseInt(form.disk_gb)
+      if (form.services) body.services = form.services.split(',').map((s: string) => s.trim()).filter(Boolean)
+      const r = await fetch(`${API_URL}/admin/infrastructure/nodes`, { method: 'POST', headers, body: JSON.stringify(body) })
+      const d = await r.json()
+      if (!r.ok) { setError(d.detail || 'Failed'); return }
+      setMsg(`Node '${form.name}' added`)
+      setForm({ name: '', provider: 'oracle_cloud', region: '', instance_type: '', instance_id: '', compartment_id: '', public_ip: '', private_ip: '', ssh_port: '22', cpu_count: '', memory_gb: '', disk_gb: '', role: 'worker', services: '', api_endpoint: '', notes: '' })
+      setShowAdd(false)
+      fetchNodes()
+    } catch (e: any) { setError(e.message) }
+  }
+
+  const healthCheck = async (nodeId: string) => {
+    setChecking(nodeId)
+    try {
+      const r = await fetch(`${API_URL}/admin/infrastructure/nodes/${nodeId}/health`, { method: 'POST', headers })
+      const d = await r.json()
+      setMsg(`Health: ${d.status} (${d.latency_ms || '?'}ms)`)
+      fetchNodes()
+    } catch { setMsg('Health check failed') }
+    setChecking(null)
+  }
+
+  const updateStatus = async (nodeId: string, status: string) => {
+    await fetch(`${API_URL}/admin/infrastructure/nodes/${nodeId}`, { method: 'PUT', headers, body: JSON.stringify({ status }) })
+    fetchNodes()
+  }
+
+  const removeNode = async (nodeId: string) => {
+    await fetch(`${API_URL}/admin/infrastructure/nodes/${nodeId}`, { method: 'DELETE', headers })
+    fetchNodes()
+  }
+
+  if (loading) return <div className="text-sm" style={{ color: 'var(--text-tertiary)' }}>Loading infrastructure...</div>
+
+  return (
+    <div>
+      {/* Stats bar */}
+      {stats && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+          <div className="card p-3"><div className="text-[10px] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>Nodes</div><div className="text-xl font-bold" style={{ color: 'var(--refi-teal)' }}>{stats.total_nodes}</div></div>
+          <div className="card p-3"><div className="text-[10px] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>Total CPU</div><div className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{stats.total_cpu} cores</div></div>
+          <div className="card p-3"><div className="text-[10px] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>Memory</div><div className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{stats.total_memory_gb} GB</div></div>
+          <div className="card p-3"><div className="text-[10px] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>Disk</div><div className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{stats.total_disk_gb} GB</div></div>
+          <div className="card p-3"><div className="text-[10px] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>Providers</div><div className="text-sm font-mono" style={{ color: 'var(--text-secondary)' }}>{Object.entries(stats.by_provider || {}).map(([k, v]) => `${k}: ${v}`).join(', ') || 'none'}</div></div>
+        </div>
+      )}
+
+      {error && <div className="mb-3 p-3 rounded-lg text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#EF4444' }}>{error}</div>}
+      {msg && <div className="mb-3 p-3 rounded-lg text-xs" style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', color: '#22C55E' }}>{msg}</div>}
+
+      {/* Header */}
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="font-bold text-base">Infrastructure Nodes ({nodes.filter(n => n.status !== 'terminated').length})</h3>
+        <button onClick={() => setShowAdd(!showAdd)} style={{ background: 'var(--refi-teal)', color: '#000', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+          + Add Node
+        </button>
+      </div>
+
+      {/* Add form */}
+      {showAdd && (
+        <div className="card p-5 mb-4" style={{ border: '1px solid var(--refi-teal)', borderRadius: 8 }}>
+          <h4 className="font-semibold text-sm mb-3">Register New Node</h4>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+            <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Node name *" className="input-base text-xs p-2 rounded" />
+            <select value={form.provider} onChange={e => setForm({ ...form, provider: e.target.value })} className="input-base text-xs p-2 rounded">
+              {PROVIDERS.map(p => <option key={p} value={p}>{p.replace('_', ' ')}</option>)}
+            </select>
+            <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} className="input-base text-xs p-2 rounded">
+              {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+            <input value={form.region} onChange={e => setForm({ ...form, region: e.target.value })} placeholder="Region (us-ashburn-1)" className="input-base text-xs p-2 rounded" />
+            <input value={form.instance_type} onChange={e => setForm({ ...form, instance_type: e.target.value })} placeholder="Instance type (VM.Standard.A1.Flex)" className="input-base text-xs p-2 rounded" />
+            <input value={form.instance_id} onChange={e => setForm({ ...form, instance_id: e.target.value })} placeholder="Instance ID (OCID)" className="input-base text-xs p-2 rounded" />
+            <input value={form.compartment_id} onChange={e => setForm({ ...form, compartment_id: e.target.value })} placeholder="Compartment ID (OCID)" className="input-base text-xs p-2 rounded" />
+            <input value={form.public_ip} onChange={e => setForm({ ...form, public_ip: e.target.value })} placeholder="Public IP" className="input-base text-xs p-2 rounded" />
+            <input value={form.private_ip} onChange={e => setForm({ ...form, private_ip: e.target.value })} placeholder="Private IP" className="input-base text-xs p-2 rounded" />
+            <input value={form.cpu_count} onChange={e => setForm({ ...form, cpu_count: e.target.value })} placeholder="CPUs" type="number" className="input-base text-xs p-2 rounded" />
+            <input value={form.memory_gb} onChange={e => setForm({ ...form, memory_gb: e.target.value })} placeholder="Memory (GB)" type="number" className="input-base text-xs p-2 rounded" />
+            <input value={form.disk_gb} onChange={e => setForm({ ...form, disk_gb: e.target.value })} placeholder="Disk (GB)" type="number" className="input-base text-xs p-2 rounded" />
+            <input value={form.api_endpoint} onChange={e => setForm({ ...form, api_endpoint: e.target.value })} placeholder="API endpoint (http://ip:8000)" className="input-base text-xs p-2 rounded" />
+            <input value={form.services} onChange={e => setForm({ ...form, services: e.target.value })} placeholder="Services (api, bitnet, smtp)" className="input-base text-xs p-2 rounded" />
+            <input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Notes" className="input-base text-xs p-2 rounded" />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setShowAdd(false)} className="text-xs px-3 py-1.5 rounded" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', cursor: 'pointer' }}>Cancel</button>
+            <button onClick={addNode} className="text-xs px-4 py-1.5 rounded font-semibold" style={{ background: 'var(--refi-teal)', color: '#000', border: 'none', cursor: 'pointer' }}>Register Node</button>
+          </div>
+        </div>
+      )}
+
+      {/* Node list */}
+      {nodes.filter(n => n.status !== 'terminated').length === 0 ? (
+        <div className="text-center py-10">
+          <div className="text-3xl mb-2 opacity-50">?</div>
+          <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>No infrastructure nodes registered</p>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-tertiary)' }}>Add your Oracle Cloud instances to manage and scale the platform</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {nodes.filter(n => n.status !== 'terminated').map(n => (
+            <div key={n.id} className="card p-4" style={{ border: '1px solid var(--border-subtle)' }}>
+              <div className="flex items-start justify-between mb-2">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{n.name}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold" style={{ background: `${STATUS_CLR[n.status] || '#6B7280'}20`, color: STATUS_CLR[n.status] || '#6B7280' }}>{n.status}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-tertiary)' }}>{n.role}</span>
+                    {n.last_health_status && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: `${HEALTH_CLR[n.last_health_status] || '#6B7280'}15`, color: HEALTH_CLR[n.last_health_status] || '#6B7280' }}>
+                        {n.last_health_status} {n.health_check_latency_ms ? `(${n.health_check_latency_ms}ms)` : ''}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex gap-4 text-[11px]" style={{ color: 'var(--text-tertiary)', fontFamily: "'JetBrains Mono', monospace" }}>
+                    <span>{n.provider.replace('_', ' ')}</span>
+                    {n.region && <span>{n.region}</span>}
+                    {n.public_ip && <span>{n.public_ip}</span>}
+                    {n.instance_type && <span>{n.instance_type}</span>}
+                  </div>
+                </div>
+                <div className="flex gap-1">
+                  {n.api_endpoint && (
+                    <button onClick={() => healthCheck(n.id)} disabled={checking === n.id}
+                      className="text-[10px] px-2 py-1 rounded" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                      {checking === n.id ? '...' : 'Health Check'}
+                    </button>
+                  )}
+                  {n.status === 'online' && <button onClick={() => updateStatus(n.id, 'offline')} className="text-[10px] px-2 py-1 rounded" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#EF4444', cursor: 'pointer' }}>Stop</button>}
+                  {n.status === 'offline' && <button onClick={() => updateStatus(n.id, 'online')} className="text-[10px] px-2 py-1 rounded" style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', color: '#22C55E', cursor: 'pointer' }}>Start</button>}
+                  <button onClick={() => removeNode(n.id)} className="text-[10px] px-2 py-1 rounded" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', color: 'var(--text-tertiary)', cursor: 'pointer' }}>Remove</button>
+                </div>
+              </div>
+              <div className="flex gap-4 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                {n.cpu_count && <span>{n.cpu_count} CPU</span>}
+                {n.memory_gb && <span>{n.memory_gb} GB RAM</span>}
+                {n.disk_gb && <span>{n.disk_gb} GB Disk</span>}
+                {n.services?.length > 0 && <span>Services: {n.services.join(', ')}</span>}
+                {n.last_health_check && <span>Last check: {new Date(n.last_health_check).toLocaleString()}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

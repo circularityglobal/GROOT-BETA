@@ -2,186 +2,347 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAccount, useConnect, useSignMessage, useDisconnect, Connector } from 'wagmi'
 import { API_URL } from '@/lib/config'
+import { DEFAULT_CHAIN_ID } from '@/lib/wallet'
 import WalletOnboarding from '@/components/WalletOnboarding'
 
 type AuthStep = 'connect' | 'onboarding' | 'complete'
 type AuthTab = 'connect' | 'create'
 
-interface ChainInfo {
-  chain_id: number
+// Detected wallet providers via EIP-6963 or window.ethereum
+interface DetectedWallet {
   name: string
-  short_name: string
-  currency: string
-  is_testnet: boolean
+  icon: React.ReactNode
+  color: string
+  provider: any // EIP-1193 provider
 }
 
-const DEFAULT_CHAINS: ChainInfo[] = [
-  { chain_id: 1, name: 'Ethereum', short_name: 'eth', currency: 'ETH', is_testnet: false },
-  { chain_id: 137, name: 'Polygon', short_name: 'matic', currency: 'MATIC', is_testnet: false },
-  { chain_id: 42161, name: 'Arbitrum One', short_name: 'arb1', currency: 'ETH', is_testnet: false },
-  { chain_id: 10, name: 'Optimism', short_name: 'oeth', currency: 'ETH', is_testnet: false },
-  { chain_id: 8453, name: 'Base', short_name: 'base', currency: 'ETH', is_testnet: false },
-  { chain_id: 11155111, name: 'Sepolia', short_name: 'sep', currency: 'SEP', is_testnet: true },
-]
-
-// Chain icons (minimal SVG representations)
-const CHAIN_ICONS: Record<number, string> = {
-  1: '⟠',      // Ethereum
-  137: '⬡',    // Polygon
-  42161: '◆',   // Arbitrum
-  10: '◉',      // Optimism
-  8453: '◈',    // Base
-  11155111: '⟠', // Sepolia
+// Default chain name for display
+const CHAIN_NAMES: Record<number, string> = {
+  50: 'XDC Network',
+  43113: 'Avalanche Fuji',
 }
 
-// Wallet brand colors and icons
-const WALLET_BRANDS: Record<string, { color: string; icon: React.ReactNode }> = {
+// Real brand logos as accurate SVGs
+const WALLET_ICONS: Record<string, { color: string; icon: React.ReactNode; desc: string }> = {
   metamask: {
     color: '#F6851B',
+    desc: 'Browser extension',
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        <path d="M21.3 2L13.1 8.2l1.5-3.6L21.3 2z" fill="#E2761B" stroke="#E2761B" strokeWidth="0.1"/>
-        <path d="M2.7 2l8.1 6.3-1.4-3.7L2.7 2zM18.4 17.1l-2.2 3.3 4.6 1.3 1.3-4.5-3.7-.1zM1.9 17.2l1.3 4.5 4.6-1.3-2.2-3.3-3.7.1z" fill="#E4761B" stroke="#E4761B" strokeWidth="0.1"/>
-        <path d="M7.5 10.7l-1.3 2 4.6.2-.2-5-3.1 2.8zM16.5 10.7l-3.2-2.9-.1 5.1 4.6-.2-1.3-2zM7.8 20.4l2.8-1.4-2.4-1.9-.4 3.3zM13.4 19l2.8 1.4-.4-3.3-2.4 1.9z" fill="#E4761B" stroke="#E4761B" strokeWidth="0.1"/>
+      <svg width="28" height="28" viewBox="0 0 318.6 318.6" fill="none">
+        <path d="M274.1 35.5l-99.5 73.9L193 65.8z" fill="#E2761B" stroke="#E2761B" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M44.4 35.5l98.7 74.6-17.5-44.3zm193.9 171.3l-26.5 40.6 56.7 15.6 16.3-55.3zm-204.4.9L50.1 263l56.7-15.6-26.5-40.6z" fill="#E4761B" stroke="#E4761B" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M103.6 138.2l-15.8 23.9 56.3 2.5-2-60.5zm111.3 0l-39.8-35L174 164.6l56.2-2.5zm-108 95L142.1 210l-34.1-26.6zm71.1-23.3l25.3 23.3-5.6-49.9z" fill="#E4761B" stroke="#E4761B" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M211.8 233.2l-25.3-23.3 2 16.8-.2 7.1zm-123.5 0l23.6.6-.2-7.1 2-16.8z" fill="#D7C1B3" stroke="#D7C1B3" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M112.6 193l-32.9-9.7 23.2-10.6zm93.4 0l9.7-20.3 23.3 10.6z" fill="#233447" stroke="#233447" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M88.3 233.2l14-40.6-26.5.8zm127.9-40.6l14 40.6 12.5-39.8zM230 162.1l-56.2 2.5 5.2 28.9 9.7-20.3 23.3 10.6zm-150.3 23.7l23.2-10.6 9.7 20.3 5.2-28.9-56.2-2.5z" fill="#CD6116" stroke="#CD6116" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M87.8 162.1l23.6 46-.8-22.9zm143.1 23.1l-.9 22.9 23.6-46zm-86.9-20.6l-5.2 28.9 6.6 34.1 1.5-44.9zm30.6 0l-2.9 18 1.2 45 6.7-34.1z" fill="#E4751F" stroke="#E4751F" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M186.2 193l-6.7 34.1 4.8 3.3 29.4-22.9.9-22.9zm-106.5-9.7l.8 22.9 29.4 22.9 4.8-3.3-6.6-34.1z" fill="#F6851B" stroke="#F6851B" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M88.3 233.2l23.6.6-.2-7.1 2-16.8-25.4 23.3zm141.9 0l-25.3-23.3 2 16.8-.2 7.1z" fill="#C0AD9E" stroke="#C0AD9E" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M274.1 35.5L193 65.8l18.6 43.5 56.2-2.5 15.8-23.9-40-24.7zm-229.7 0l40.1 24.7-15.8 23.9 56.2 2.5L143 22.8z" fill="#763D16" stroke="#763D16" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    ),
+  },
+  rabby: {
+    color: '#7084FF',
+    desc: 'Multi-chain browser wallet',
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 256 256" fill="none">
+        <rect width="256" height="256" rx="48" fill="#7C85F2"/>
+        <path d="M80 100c0-22 18-40 40-40h16c22 0 40 18 40 40v8c0 22-18 40-40 40h-16c-22 0-40-18-40-40v-8z" fill="white"/>
+        <circle cx="112" cy="104" r="10" fill="#7C85F2"/>
+        <circle cx="144" cy="104" r="10" fill="#7C85F2"/>
+        <path d="M96 156c0-8.8 7.2-16 16-16h32c8.8 0 16 7.2 16 16v24c0 8.8-7.2 16-16 16h-32c-8.8 0-16-7.2-16-16v-24z" fill="white"/>
       </svg>
     ),
   },
   coinbase: {
     color: '#0052FF',
+    desc: 'Extension & mobile app',
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        <rect width="24" height="24" rx="6" fill="#0052FF"/>
-        <path d="M12 4.5a7.5 7.5 0 100 15 7.5 7.5 0 000-15zm-2.25 5.25h4.5a.75.75 0 01.75.75v3a.75.75 0 01-.75.75h-4.5a.75.75 0 01-.75-.75v-3a.75.75 0 01.75-.75z" fill="white"/>
+      <svg width="28" height="28" viewBox="0 0 256 256" fill="none">
+        <rect width="256" height="256" rx="48" fill="#0052FF"/>
+        <circle cx="128" cy="128" r="80" fill="white"/>
+        <rect x="104" y="104" width="48" height="48" rx="8" fill="#0052FF"/>
       </svg>
     ),
   },
-  walletconnect: {
-    color: '#3B99FC',
+  trust: {
+    color: '#0500FF',
+    desc: 'Multi-chain mobile wallet',
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        <rect width="24" height="24" rx="6" fill="#3B99FC"/>
-        <path d="M7.2 9.6c2.6-2.6 6.9-2.6 9.5 0l.3.3a.3.3 0 010 .5l-1.1 1a.2.2 0 01-.2 0l-.5-.4a5 5 0 00-6.6 0l-.5.4a.2.2 0 01-.2 0l-1.1-1a.3.3 0 010-.5l.4-.3zm11.7 2.2l1 .9a.3.3 0 010 .5l-4.4 4.3a.4.4 0 01-.5 0l-3.1-3a.1.1 0 00-.1 0l-3.1 3a.4.4 0 01-.5 0L3.8 13.2a.3.3 0 010-.5l1-.9a.4.4 0 01.5 0l3.1 3a.1.1 0 00.1 0l3.1-3a.4.4 0 01.5 0l3.1 3a.1.1 0 00.1 0l3.1-3a.4.4 0 01.5 0z" fill="white"/>
+      <svg width="28" height="28" viewBox="0 0 256 256" fill="none">
+        <rect width="256" height="256" rx="48" fill="#0500FF"/>
+        <path d="M128 48c-36 0-64 16-64 16v72c0 48 64 72 64 72s64-24 64-72V64s-28-16-64-16z" fill="none" stroke="white" strokeWidth="16" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    ),
+  },
+  phantom: {
+    color: '#AB9FF2',
+    desc: 'Multi-chain wallet',
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 256 256" fill="none">
+        <rect width="256" height="256" rx="48" fill="#AB9FF2"/>
+        <path d="M72 148c0-44 36-80 80-80h24c11 0 20 9 20 20v72c0 11-9 20-20 20H96c-13.3 0-24-10.7-24-24v-8z" fill="white"/>
+        <circle cx="112" cy="128" r="10" fill="#AB9FF2"/>
+        <circle cx="148" cy="128" r="10" fill="#AB9FF2"/>
       </svg>
     ),
   },
   dcent: {
     color: '#00D4AA',
+    desc: 'Biometric hardware wallet',
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        <rect width="24" height="24" rx="6" fill="#00D4AA"/>
-        <path d="M12 5a7 7 0 100 14 7 7 0 000-14zm0 2a1.5 1.5 0 110 3 1.5 1.5 0 010-3zm-3 5h6v1a3 3 0 01-6 0v-1z" fill="white"/>
+      <svg width="28" height="28" viewBox="0 0 256 256" fill="none">
+        <rect width="256" height="256" rx="48" fill="#1A1A2E"/>
+        <path d="M128 48L68 88v80l60 40 60-40V88l-60-40z" fill="none" stroke="#00D4AA" strokeWidth="12" strokeLinejoin="round"/>
+        <circle cx="128" cy="128" r="24" fill="#00D4AA"/>
       </svg>
     ),
   },
   trezor: {
-    color: '#14854F',
+    color: '#00854D',
+    desc: 'Hardware security wallet',
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        <rect width="24" height="24" rx="6" fill="#14854F"/>
-        <path d="M12 4l-6 3v5c0 4.4 2.6 8.5 6 10 3.4-1.5 6-5.6 6-10V7l-6-3zm0 2.5l4 2v4c0 3.3-1.8 6.4-4 7.5-2.2-1.1-4-4.2-4-7.5v-4l4-2z" fill="white"/>
+      <svg width="28" height="28" viewBox="0 0 256 256" fill="none">
+        <rect width="256" height="256" rx="48" fill="#00854D"/>
+        <path d="M128 56c-24 0-44 20-44 44v20h-8c-4.4 0-8 3.6-8 8v64c0 4.4 3.6 8 8 8h104c4.4 0 8-3.6 8-8v-64c0-4.4-3.6-8-8-8h-8v-20c0-24-20-44-44-44zm0 20c13.3 0 24 10.7 24 24v20H104v-20c0-13.3 10.7-24 24-24z" fill="white"/>
       </svg>
     ),
   },
   ledger: {
     color: '#000000',
+    desc: 'Hardware security wallet',
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        <rect width="24" height="24" rx="6" fill="#000"/>
-        <path d="M5 5h5v14H5V5zm9 0h5v5h-5V5zm0 9h5v5h-5v-5z" fill="white"/>
+      <svg width="28" height="28" viewBox="0 0 256 256" fill="none">
+        <rect width="256" height="256" rx="48" fill="#000"/>
+        <path d="M60 60h56v136H60V60z" fill="white"/>
+        <path d="M140 60h56v56h-56V60z" fill="white"/>
+        <path d="M140 140h56v56h-56v-56z" fill="white"/>
+      </svg>
+    ),
+  },
+  okx: {
+    color: '#000000',
+    desc: 'Multi-chain Web3 wallet',
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 256 256" fill="none">
+        <rect width="256" height="256" rx="48" fill="#000"/>
+        <rect x="60" y="60" width="52" height="52" rx="4" fill="white"/>
+        <rect x="144" y="60" width="52" height="52" rx="4" fill="white"/>
+        <rect x="60" y="144" width="52" height="52" rx="4" fill="white"/>
+        <rect x="102" y="102" width="52" height="52" rx="4" fill="white"/>
+        <rect x="144" y="144" width="52" height="52" rx="4" fill="white"/>
+      </svg>
+    ),
+  },
+  brave: {
+    color: '#FB542B',
+    desc: 'Built-in browser wallet',
+    icon: (
+      <svg width="28" height="28" viewBox="0 0 256 256" fill="none">
+        <rect width="256" height="256" rx="48" fill="#FB542B"/>
+        <path d="M128 40L72 72l8 24-12 16 16 8-4 20 20 16v40l28 16 28-16v-40l20-16-4-20 16-8-12-16 8-24-56-32z" fill="white"/>
       </svg>
     ),
   },
   default: {
     color: 'var(--refi-teal)',
+    desc: 'Direct connection',
     icon: (
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <rect x="2" y="6" width="20" height="14" rx="3"/>
-        <path d="M16 14a2 2 0 100-4 2 2 0 000 4z"/>
-        <path d="M2 10h20"/>
+      <svg width="28" height="28" viewBox="0 0 256 256" fill="none">
+        <rect width="256" height="256" rx="48" fill="#1A1A2E"/>
+        <rect x="40" y="72" width="176" height="112" rx="16" fill="none" stroke="#5CE0D2" strokeWidth="12"/>
+        <circle cx="164" cy="128" r="16" fill="#5CE0D2"/>
+        <path d="M40 104h176" stroke="#5CE0D2" strokeWidth="12"/>
       </svg>
     ),
   },
 }
 
-function getWalletBrand(connector: Connector) {
-  const id = connector.id.toLowerCase()
-  const name = connector.name.toLowerCase()
-  if (id.includes('metamask') || id === 'io.metamask' || name.includes('metamask')) return WALLET_BRANDS.metamask
-  if (id.includes('coinbase') || name.includes('coinbase')) return WALLET_BRANDS.coinbase
-  if (id.includes('walletconnect') || name.includes('walletconnect')) return WALLET_BRANDS.walletconnect
-  if (id.includes('dcent') || name.includes("d'cent") || name.includes('dcent')) return WALLET_BRANDS.dcent
-  if (id.includes('trezor') || name.includes('trezor')) return WALLET_BRANDS.trezor
-  if (id.includes('ledger') || name.includes('ledger')) return WALLET_BRANDS.ledger
-  return WALLET_BRANDS.default
+function getWalletIcon(name: string) {
+  const n = name.toLowerCase()
+  if (n.includes('metamask')) return WALLET_ICONS.metamask
+  if (n.includes('rabby')) return WALLET_ICONS.rabby
+  if (n.includes('coinbase')) return WALLET_ICONS.coinbase
+  if (n.includes('trust')) return WALLET_ICONS.trust
+  if (n.includes('phantom')) return WALLET_ICONS.phantom
+  if (n.includes('dcent') || n.includes("d'cent")) return WALLET_ICONS.dcent
+  if (n.includes('trezor')) return WALLET_ICONS.trezor
+  if (n.includes('ledger')) return WALLET_ICONS.ledger
+  if (n.includes('okx')) return WALLET_ICONS.okx
+  if (n.includes('brave')) return WALLET_ICONS.brave
+  return WALLET_ICONS.default
 }
 
-function getWalletDisplayName(connector: Connector): string {
-  const name = connector.name
-  if (name === 'Injected') return 'Browser Wallet'
-  return name
+/**
+ * Detect all available wallet providers.
+ * Uses EIP-6963 (multi-wallet discovery) with fallback to window.ethereum.
+ */
+function detectWallets(): DetectedWallet[] {
+  if (typeof window === 'undefined') return []
+
+  const wallets: DetectedWallet[] = []
+  const seen = new Set<string>()
+
+  // Check for EIP-6963 providers (modern multi-wallet standard)
+  const eip6963Providers = (window as any).__eip6963_providers || []
+  for (const p of eip6963Providers) {
+    const name = p.info?.name || 'Unknown Wallet'
+    if (seen.has(name.toLowerCase())) continue
+    seen.add(name.toLowerCase())
+    const brand = getWalletIcon(name)
+    wallets.push({ name, icon: brand.icon, color: brand.color, provider: p.provider })
+  }
+
+  // Detect provider name from EIP-1193 flags
+  function identifyProvider(p: any): string {
+    if (p.isRabby) return 'Rabby Wallet'
+    if (p.isMetaMask) return 'MetaMask'
+    if (p.isCoinbaseWallet) return 'Coinbase Wallet'
+    if (p.isBraveWallet) return 'Brave Wallet'
+    if (p.isTrust || p.isTrustWallet) return 'Trust Wallet'
+    if (p.isPhantom) return 'Phantom'
+    if (p.isDCENT) return "D'CENT"
+    if (p.isOkxWallet || p.isOKExWallet) return 'OKX Wallet'
+    if (p.isTrezor) return 'Trezor'
+    if (p.isLedger || p.isLedgerConnect) return 'Ledger'
+    return 'Browser Wallet'
+  }
+
+  // Fallback: check window.ethereum directly
+  const eth = (window as any).ethereum
+  if (eth) {
+    // Check for multiple providers (MetaMask + Coinbase, etc.)
+    if (eth.providers && Array.isArray(eth.providers)) {
+      for (const p of eth.providers) {
+        const name = identifyProvider(p)
+        if (seen.has(name.toLowerCase())) continue
+        seen.add(name.toLowerCase())
+        const brand = getWalletIcon(name)
+        wallets.push({ name, icon: brand.icon, color: brand.color, provider: p })
+      }
+    } else if (!seen.size) {
+      const name = identifyProvider(eth)
+      const brand = getWalletIcon(name)
+      wallets.push({ name, icon: brand.icon, color: brand.color, provider: eth })
+    }
+  }
+
+  return wallets
 }
 
 export default function AuthFlow({ onComplete }: { onComplete?: (token: string) => void }) {
   const router = useRouter()
   const prefetchedNonce = useRef<{ nonce: string } | null>(null)
 
-  const { address, isConnected } = useAccount()
-  const { connectors, connect, isPending: isConnecting } = useConnect()
-  const { signMessageAsync } = useSignMessage()
-  const { disconnect } = useDisconnect()
-
   const [tab, setTab] = useState<AuthTab>('connect')
   const [step, setStep] = useState<AuthStep>('connect')
   const [error, setError] = useState('')
   const [connecting, setConnecting] = useState(false)
   const [signing, setSigning] = useState(false)
-  const [chainId, setChainId] = useState(1)
-  const [chainName, setChainName] = useState('Ethereum')
-  const [supportedChainsList, setSupportedChainsList] = useState<ChainInfo[]>(DEFAULT_CHAINS)
-  const [showTestnets, setShowTestnets] = useState(false)
+  const [wallets, setWallets] = useState<DetectedWallet[]>([])
+  const [connectedAddress, setConnectedAddress] = useState<string | null>(null)
+  const activeProvider = useRef<any>(null)
 
-  // Prefetch chains and nonce
+  const chainId = DEFAULT_CHAIN_ID
+  const chainName = CHAIN_NAMES[chainId] || `Chain ${chainId}`
+
+  // Detect wallets + prefetch nonce on mount
   useEffect(() => {
-    fetch(`${API_URL}/auth/chains`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.chains?.length) setSupportedChainsList(data.chains)
-      })
-      .catch(() => {})
+    setWallets(detectWallets())
 
+    // Listen for EIP-6963 announcements (wallets may announce after page load)
+    const handler = () => setWallets(detectWallets())
+    window.addEventListener('eip6963:announceProvider', handler)
+
+    // Prefetch nonce for faster auth
     fetch(`${API_URL}/auth/siwe/nonce`)
       .then((r) => r.json())
       .then((data) => { prefetchedNonce.current = data })
       .catch(() => {})
+
+    return () => window.removeEventListener('eip6963:announceProvider', handler)
   }, [])
 
-  // Auto-proceed to SIWE signing when wallet connects
+  // Request EIP-6963 discovery
   useEffect(() => {
-    if (isConnected && address && connecting) {
-      handleSIWESign(address)
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('eip6963:requestProvider'))
     }
-  }, [isConnected, address, connecting])
+  }, [])
 
-  const handleChainSelect = (id: number) => {
-    const chain = supportedChainsList.find((c) => c.chain_id === id)
-    setChainId(id)
-    setChainName(chain?.name || `Chain ${id}`)
-  }
-
-  const handleConnect = useCallback((connector: Connector) => {
+  const handleConnect = useCallback(async (wallet: DetectedWallet) => {
     setError('')
     setConnecting(true)
+    activeProvider.current = wallet.provider
+
     try {
-      connect({ connector })
+      // Request accounts via EIP-1193
+      const accounts: string[] = await wallet.provider.request({
+        method: 'eth_requestAccounts',
+      })
+
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No accounts returned — check your wallet')
+      }
+
+      const address = accounts[0]
+      setConnectedAddress(address)
+
+      // Try to switch to the target chain
+      try {
+        await wallet.provider.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: `0x${chainId.toString(16)}` }],
+        })
+      } catch (switchErr: any) {
+        // 4902 = chain not added — try adding it
+        if (switchErr.code === 4902) {
+          try {
+            if (chainId === 43113) {
+              await wallet.provider.request({
+                method: 'wallet_addEthereumChain',
+                params: [{
+                  chainId: '0xa869',
+                  chainName: 'Avalanche Fuji Testnet',
+                  nativeCurrency: { name: 'AVAX', symbol: 'AVAX', decimals: 18 },
+                  rpcUrls: ['https://api.avax-test.network/ext/bc/C/rpc'],
+                  blockExplorerUrls: ['https://testnet.snowtrace.io/'],
+                }],
+              })
+            } else if (chainId === 50) {
+              await wallet.provider.request({
+                method: 'wallet_addEthereumChain',
+                params: [{
+                  chainId: '0x32',
+                  chainName: 'XDC Network',
+                  nativeCurrency: { name: 'XDC', symbol: 'XDC', decimals: 18 },
+                  rpcUrls: ['https://rpc.xinfin.network'],
+                  blockExplorerUrls: ['https://explorer.xinfin.network/'],
+                }],
+              })
+            }
+          } catch {
+            // User rejected chain add — proceed anyway, SIWE works cross-chain
+          }
+        }
+        // Other switch errors are non-fatal — proceed with whatever chain the user is on
+      }
+
+      // Proceed to SIWE sign
+      await handleSIWESign(address, wallet.provider)
     } catch (e: any) {
-      setError(e.message || 'Connection failed')
+      if (e.code === 4001) {
+        setError('Connection rejected — please try again')
+      } else {
+        setError(e.message || 'Connection failed')
+      }
       setConnecting(false)
     }
-  }, [connect])
+  }, [chainId])
 
-  const handleSIWESign = async (walletAddress: string) => {
+  const handleSIWESign = async (walletAddress: string, provider: any) => {
     try {
       setSigning(true)
 
@@ -208,7 +369,11 @@ export default function AuthFlow({ onComplete }: { onComplete?: (token: string) 
         `Issued At: ${now}`,
       ].join('\n')
 
-      const signature = await signMessageAsync({ message })
+      // Sign via EIP-1193 personal_sign
+      const signature = await provider.request({
+        method: 'personal_sign',
+        params: [message, walletAddress],
+      })
 
       const verifyResp = await fetch(`${API_URL}/auth/siwe/verify`, {
         method: 'POST',
@@ -235,29 +400,17 @@ export default function AuthFlow({ onComplete }: { onComplete?: (token: string) 
       onComplete?.(data.access_token)
       router.push('/dashboard')
     } catch (e: any) {
-      setError(e.message)
+      if (e.code === 4001) {
+        setError('Signature rejected — please try again')
+      } else {
+        setError(e.message)
+      }
       setConnecting(false)
       setSigning(false)
     }
   }
 
-  const isBusy = connecting || signing || isConnecting
-
-  // Deduplicate connectors by name (wagmi can register duplicates)
-  const seen = new Set<string>()
-  const uniqueConnectors = connectors.filter((c) => {
-    const key = c.name.toLowerCase()
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-
-  // All connectors are available — WalletConnect is now supported for
-  // mobile wallets, hardware wallets (DCENT, Trezor, Ledger), and QR code scanning
-  const walletConnectors = uniqueConnectors
-
-  const mainnetChains = supportedChainsList.filter((c) => !c.is_testnet)
-  const testnetChains = supportedChainsList.filter((c) => c.is_testnet)
+  const isBusy = connecting || signing
 
   return (
     <>
@@ -315,43 +468,11 @@ export default function AuthFlow({ onComplete }: { onComplete?: (token: string) 
         {/* ─── Connect Wallet Tab ─── */}
         {tab === 'connect' && step !== 'onboarding' && (
           <div className="auth-content">
-            {/* Network Selector */}
+            {/* Connected network indicator */}
             <div className="auth-section">
-              <div className="auth-section-header">
-                <label className="auth-label">Select Network</label>
-                {testnetChains.length > 0 && (
-                  <button
-                    className="auth-testnet-toggle"
-                    onClick={() => setShowTestnets(!showTestnets)}
-                  >
-                    {showTestnets ? 'Hide' : 'Show'} Testnets
-                  </button>
-                )}
-              </div>
-              <div className="auth-chain-grid">
-                {mainnetChains.map((chain) => (
-                  <button
-                    key={chain.chain_id}
-                    onClick={() => handleChainSelect(chain.chain_id)}
-                    disabled={isBusy}
-                    className={`auth-chain-btn ${chainId === chain.chain_id ? 'auth-chain-btn-active' : ''}`}
-                  >
-                    <span className="auth-chain-icon">{CHAIN_ICONS[chain.chain_id] || '●'}</span>
-                    <span>{chain.name}</span>
-                  </button>
-                ))}
-                {showTestnets && testnetChains.map((chain) => (
-                  <button
-                    key={chain.chain_id}
-                    onClick={() => handleChainSelect(chain.chain_id)}
-                    disabled={isBusy}
-                    className={`auth-chain-btn auth-chain-btn-testnet ${chainId === chain.chain_id ? 'auth-chain-btn-active' : ''}`}
-                  >
-                    <span className="auth-chain-icon">{CHAIN_ICONS[chain.chain_id] || '●'}</span>
-                    <span>{chain.name}</span>
-                    <span className="auth-testnet-badge">testnet</span>
-                  </button>
-                ))}
+              <div className="auth-info-item" style={{ justifyContent: 'center', opacity: 0.6 }}>
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--success)' }} />
+                <span style={{ fontSize: 11 }}>Connecting on {chainName}</span>
               </div>
             </div>
 
@@ -359,13 +480,12 @@ export default function AuthFlow({ onComplete }: { onComplete?: (token: string) 
             <div className="auth-section">
               <label className="auth-label">Choose Wallet</label>
               <div className="auth-wallet-list">
-                {walletConnectors.map((connector) => {
-                  const brand = getWalletBrand(connector)
-                  const displayName = getWalletDisplayName(connector)
+                {wallets.map((wallet, i) => {
+                  const brand = getWalletIcon(wallet.name)
                   return (
                     <button
-                      key={connector.uid}
-                      onClick={() => handleConnect(connector)}
+                      key={`${wallet.name}-${i}`}
+                      onClick={() => handleConnect(wallet)}
                       disabled={isBusy}
                       className="auth-wallet-btn"
                     >
@@ -373,13 +493,8 @@ export default function AuthFlow({ onComplete }: { onComplete?: (token: string) 
                         {brand.icon}
                       </div>
                       <div className="auth-wallet-info">
-                        <span className="auth-wallet-name">{displayName}</span>
-                        <span className="auth-wallet-detail">
-                          {connector.id === 'injected' ? 'Browser extension' :
-                           connector.id.includes('walletConnect') ? 'QR code · Mobile · Hardware wallets' :
-                           connector.id.includes('coinbase') ? 'Extension & mobile app' :
-                           'Direct connection'}
-                        </span>
+                        <span className="auth-wallet-name">{wallet.name}</span>
+                        <span className="auth-wallet-detail">{brand.desc}</span>
                       </div>
                       <div className="auth-wallet-arrow">
                         {isBusy ? (
@@ -394,7 +509,7 @@ export default function AuthFlow({ onComplete }: { onComplete?: (token: string) 
                   )
                 })}
 
-                {walletConnectors.length === 0 && (
+                {wallets.length === 0 && (
                   <div className="auth-empty-state">
                     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.4 }}>
                       <rect x="2" y="6" width="20" height="14" rx="3"/>

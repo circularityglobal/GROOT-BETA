@@ -79,7 +79,6 @@ export default function UserProfilePage({ params }: { params: { username: string
 
   useEffect(() => {
     const token = localStorage.getItem('refinet_token')
-    if (!token) { window.location.href = '/settings/'; return }
 
     Promise.all([
       fetch(`${API_URL}/registry/users/${username}`).then(r => r.ok ? r.json() : null),
@@ -131,12 +130,24 @@ export default function UserProfilePage({ params }: { params: { username: string
           fontSize: 28, fontWeight: 700, color: 'var(--bg-primary)',
           flexShrink: 0,
         }}>
-          {username[0]?.toUpperCase()}
+          {(profile.cifi_verified && profile.cifi_username ? profile.cifi_username[0] : username[0])?.toUpperCase()}
         </div>
 
         <div className="flex-1">
           <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-2xl font-bold" style={{ letterSpacing: '-0.02em' }}>{username}</h1>
+            <h1 className="text-2xl font-bold" style={{ letterSpacing: '-0.02em' }}>
+              {profile.cifi_verified ? `@${profile.cifi_username}` : profile.eth_address ? `${profile.eth_address.slice(0, 6)}...${profile.eth_address.slice(-4)}` : username}
+            </h1>
+            {profile.cifi_verified && (
+              <span style={{
+                fontSize: 10, padding: '2px 8px', borderRadius: 10,
+                background: 'rgba(74,222,128,0.15)',
+                color: 'var(--success)',
+                fontFamily: "'JetBrains Mono', monospace", fontWeight: 600,
+              }}>
+                VERIFIED
+              </span>
+            )}
             <span style={{
               fontSize: 10, padding: '2px 8px', borderRadius: 10,
               background: `${TIER_COLORS[profile.tier] || 'var(--text-tertiary)'}20`,

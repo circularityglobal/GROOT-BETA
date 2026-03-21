@@ -89,7 +89,7 @@ export default class ErrorBoundary extends React.Component<Props, State> {
             <img
               src="/refi-logo.png"
               alt="REFINET"
-              style={{ width: 48, height: 48, borderRadius: '50%', margin: '0 auto 16px', display: 'block' }}
+              style={{ width: 48, height: 48, margin: '0 auto 16px', display: 'block' }}
               onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
             />
             <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>

@@ -147,6 +147,40 @@ class ScheduledTask(InternalBase):
     updated_at = Column(DateTime, server_default=func.now())
 
 
+class InfraNode(InternalBase):
+    """
+    Infrastructure node registry — tracks Oracle Cloud instances and
+    other server nodes that power the platform. Admin manages these
+    to scale the platform across multiple instances.
+    """
+    __tablename__ = "infra_nodes"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    name = Column(String, unique=True, nullable=False, index=True)
+    provider = Column(String, nullable=False, default="oracle_cloud")  # oracle_cloud | aws | gcp | hetzner | bare_metal
+    region = Column(String, nullable=True)                             # us-ashburn-1, eu-frankfurt-1, etc.
+    instance_type = Column(String, nullable=True)                      # VM.Standard.A1.Flex, etc.
+    instance_id = Column(String, nullable=True, unique=True)           # Provider's instance identifier
+    compartment_id = Column(String, nullable=True)                     # Oracle Cloud compartment OCID
+    public_ip = Column(String, nullable=True)
+    private_ip = Column(String, nullable=True)
+    ssh_port = Column(Integer, default=22)
+    cpu_count = Column(Integer, nullable=True)
+    memory_gb = Column(Integer, nullable=True)
+    disk_gb = Column(Integer, nullable=True)
+    role = Column(String, nullable=False, default="worker")            # primary | worker | bitnet | database | gateway
+    services = Column(Text, nullable=True)                             # JSON array: ["api", "bitnet", "smtp"]
+    status = Column(String, default="provisioning")                    # provisioning | online | degraded | offline | terminated
+    api_endpoint = Column(String, nullable=True)                       # http://ip:port for health checks
+    last_health_check = Column(DateTime, nullable=True)
+    last_health_status = Column(String, nullable=True)                 # healthy | unhealthy | timeout
+    health_check_latency_ms = Column(Integer, nullable=True)
+    notes = Column(Text, nullable=True)
+    added_by = Column(String, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now())
+
+
 class ScriptExecution(InternalBase):
     """Tracks execution of admin/agent scripts."""
     __tablename__ = "script_executions"

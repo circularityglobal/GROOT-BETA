@@ -4,6 +4,124 @@ All notable changes to REFINET Cloud are documented in this file.
 
 ---
 
+## [3.7.0] — 2026-03-20
+
+### Added — SDK Gateway Skill (LLM-Free Contract Access)
+- **New skill**: `skills/refinet-sdk-gateway/` — deterministic, LLM-free access to all public smart contract SDKs via MCP
+- **4 new MCP tools** (22 total): `resolve_contract`, `fetch_sdk`, `list_chains_for_contract`, `bulk_sdk_export`
+- `api/services/sdk_gateway.py` — core service: contract resolution by name/slug/address, multi-chain deployment lookup, paginated SDK catalog
+- Automated workers: `sdk_sync_worker.py` (staleness detection + auto-regeneration), `sdk_indexer.py` (per-chain catalog builder)
+- Usage feedback loop via `memory/working/sdk_queries.jsonl` — hot-contract detection, 30-day pruning
+- Event bus cache invalidation on SDK/ABI/visibility changes
+- Two core calls for agents: **contract address / network** lookup and **SDK fetch** — instant, no inference latency
+
+### Added — XMTP-Encrypted Help Desk (Customer Support System)
+- `SupportTicket` + `TicketMessage` models in `public.db` — status lifecycle: open → in_progress → waiting_on_user → resolved → closed
+- `api/services/support.py` — 9 functions: create, list, reply, assign, close, update status, stats
+- `api/routes/support.py` — 12 REST endpoints (6 user + 6 admin) at `/support/*`
+- Tickets linked to wallet-to-wallet DM conversations via `messaging.create_dm()` — E2E encrypted when XMTP enabled
+- **Help Desk page** (`/help/`) — 3-view UI: ticket list, new ticket form, conversation thread with admin/user message styling
+- **Sidebar tab** — "Help Desk" with question-mark icon, positioned in Build section
+- **Settings section** — "Help & Support" with quick ticket form + 5 FAQ items
+- **Admin dashboard** — `SupportQueueCard` for admin/master_admin showing open tickets, priorities, avg resolution time
+- Event bus: `support.ticket.created`, `support.ticket.replied`, `support.ticket.resolved`, `support.ticket.status_changed`
+- Migration: `migrations/public/020_support_tickets.sql`
+
+### Added — Admin Tab Visibility Controls (Feature Gating)
+- **3-layer enforcement**: UI hiding (sidebar + top bar), client-side route redirect, API middleware (403)
+- `DEFAULT_TAB_VISIBILITY` — 18 platform tabs, all default to enabled
+- `GET /admin/tab-visibility` (public, no auth) + `PUT /admin/tab-visibility` (master_admin only)
+- `api/middleware/tab_gate.py` — `TabGateMiddleware` with 30s in-memory cache, 16 gated route groups, 14 exempt prefixes
+- Master admin always bypasses all gates — sees all tabs, accesses all routes regardless of visibility settings
+- Frontend: `isTabVisible()` helper, `TAB_PATH_MAP` route guard, all 17 sidebar items + 5 top bar icons wrapped
+- Admin panel: new "VISIBILITY" tab with toggle grid, save button, enabled/disabled counts
+- Audit logging on all visibility changes via `AdminAuditLog`
+
+### Added — Infrastructure Management (Oracle Cloud & Server Nodes)
+- `InfraNode` model in `internal.db` — 24 columns: provider, region, instance_type, IPs, CPU/RAM/disk, role, services, health tracking
+- 6 admin API endpoints: list nodes, add (master_admin), update (master_admin), remove/terminate (master_admin), health check, stats
+- Health check pings node's `/health` endpoint with latency tracking
+- Stats aggregation: total nodes, CPU, memory, disk, grouped by status/role/provider
+- Admin panel: new "INFRASTRUCTURE" tab with stats bar, 15-field node registration form, node cards with health check/start/stop/remove
+- Audit logging on all node mutations
+- Migration: `migrations/internal/003_infra_nodes.sql`
+
+### Added — Master Admin Wallet-Gated Security
+- Wallet `0xE302932D42C751404AeD466C8929F1704BA89D5A` set as `master_admin` in `internal.db`
+- Role grant/revoke of `master_admin` now requires `_require_master_admin()` (JWT-only, no X-Admin-Secret bypass)
+- Regular admins can only grant `admin`, `operator`, `readonly` roles
+- All role changes audit-logged to append-only `AdminAuditLog`
+
+### Scale
+- **30 route files, 330+ API endpoints** (was 29/302)
+- **75+ database tables** (was 71) — added support_tickets, ticket_messages, infra_nodes
+- **13 admin panel tabs** — stats, onboarding, users, reviews, store, providers, wallets, networks, infrastructure, audit, MCP, secrets, visibility
+- **22 MCP tools** (was 18) — added resolve_contract, fetch_sdk, list_chains_for_contract, bulk_sdk_export
+- **7 middleware modules** (was 6) — added tab_gate.py
+- **5 installed skills** (was 3+4 base) — added refinet-sdk-gateway
+
+### Tests
+- **214/214 API tests passing** — zero regressions across all changes
+
+---
+
+## [3.6.0] — 2026-03-20
+
+### Added — Landing Page Overhaul & Brand Refresh
+- 7-panel horizontal scroll landing page (was 5): Hero, Mission, Infrastructure, Developers, For Everyone, Browser, AgentOS
+- **PanelMission** — 6 pillars: Sovereign by Design, Zero Extraction, Regenerative Finance, Community Governed, Cryptographic Identity, Intelligence for All
+- **PanelInfrastructure** — self-operating platform showcase: $0/month stats, 5 autonomous agents with live status, 317 endpoints, 9 blockchain ecosystems
+- Regenerative mission messaging throughout: "A new internet built to regenerate the world"
+- Consistent teal branding (#5CE0D2) across all panels — removed off-brand matrix green (#00FF41) from browser section
+- Transparent logo — removed black square background from `refi-logo.png`, removed `border-radius: 50%` / `rounded-full` from all 12 logo references
+
+### Added — `/login` Route & Native Wallet Connection
+- New `/login` page with lazy-loaded `AuthFlow` (page shell: 91.7 KB, wallet UI loads async)
+- Native EIP-1193 + EIP-6963 wallet connection — zero third-party dependencies (no WalletConnect SDK)
+- 10 wallet brands with real SVG logos: MetaMask, Rabby, Coinbase, Trust, Phantom, D'CENT, Trezor, Ledger, OKX, Brave
+- Auto chain switching with `wallet_addEthereumChain` for XDC (50) and Avalanche Fuji (43113)
+- `/settings` now redirects to `/login` (unauthenticated) or `/dashboard` (authenticated)
+
+### Added — XDC Network & Avalanche Fuji Chain Support
+- `api/auth/chains.py` — dynamic chain registry: queries `supported_chains` DB table, merges with hardcoded fallbacks
+- XDC Network (chain 50) and Avalanche Fuji (chain 43113) added to both DB fallbacks and frontend wagmi config
+- `DEFAULT_CHAIN_ID = 43113` (testing) — swap to `50` for XDC production
+- `lib/wallet.ts` — added XDC and Avalanche Fuji to wagmi chain config with custom RPC endpoints
+
+### Added — Centralized SPA Auth Guard
+- Single auth guard in `client-layout.tsx` replaces 14 per-page `window.location.href` redirects
+- Protected routes redirect to `/` (home) — not `/login` — preventing crash loops
+- Global transition overlay (z-index 99999) during login/logout — eliminates skeleton flash
+- All navigation uses `router.push()` / `router.replace()` — zero full-page reloads
+
+### Added — Dark Theme Lock
+- Landing page, login page: always dark, no toggle, `ForceDarkTheme` component
+- Dashboard: starts dark every session, user can toggle to light (not persisted)
+- `ThemeProvider` defaults to dark on mount, no localStorage read
+- HTML `<html data-theme="dark">` set at SSR level
+- All loading screens use hardcoded `#050505` background
+
+### Fixed — Database Schema Migration
+- Added 11 missing columns to `users` table: `auth_layer_1_completed_at`, `auth_layer_2_completed_at`, `auth_layer_3_completed_at`, `onboarding_completed_at`, `marketing_consent`, `marketing_consent_at`, `cifi_verified`, `cifi_username`, `cifi_verified_at`, `cifi_kyc_level`, `cifi_display_name`
+- Migration saved: `migrations/public/019_users_onboarding_cifi.sql`
+
+### Fixed — Build Errors & SPA Routing
+- `app/agents/page.tsx` — type error on `data.soul_md` (added `Record<string, string>` annotation)
+- `app/store/[...slug]` — converted from catch-all to `[slug]` with `generateStaticParams` + `dynamicParams = true` for static export compatibility
+- CORS: added `localhost:4001` to allowed origins for dev
+- WagmiProvider moved to wrap only authenticated AppShell — public pages load without wallet overhead
+
+### Performance
+- Login page: 220 KB → 91.7 KB (AuthFlow lazy-loaded via `dynamic()`)
+- All panel CTAs: `<a href>` → `<Link prefetch>` (client-side SPA navigation)
+- Nonce prefetched during login page load for faster SIWE signing
+- WagmiProvider scoped to authenticated pages only
+
+### Tests
+- **270/270 passing** (214 API + 56 skills) — zero regressions
+
+---
+
 ## [3.5.0] — 2026-03-20
 
 ### Added — Contract Security Analysis Pipeline

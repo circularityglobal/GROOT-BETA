@@ -7,6 +7,7 @@ Handles model-to-provider routing and fallback chain resolution.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Optional

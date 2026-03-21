@@ -46,7 +46,7 @@ export default function WebhooksPage() {
 
   useEffect(() => {
     const token = localStorage.getItem('refinet_token')
-    if (!token) { window.location.href = '/settings/'; return }
+    
     fetchWebhooks()
   }, [])
 

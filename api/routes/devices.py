@@ -59,7 +59,7 @@ def register_device(
         db, user_id,
         name=f"device:{req.name}",
         scopes="devices:write",
-        daily_limit=10000,
+        daily_limit=250,  # Capped by platform max in create_api_key()
         prefix="rf_dev_",
     )
 

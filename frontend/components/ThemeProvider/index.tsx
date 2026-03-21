@@ -10,21 +10,19 @@ const ThemeContext = createContext<{
 }>({ theme: 'dark', toggle: () => {} })
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  // Dark is always the default. Light is opt-in per session only.
   const [theme, setTheme] = useState<Theme>('dark')
 
+  // Ensure dark is set on mount — no flash possible
   useEffect(() => {
-    const saved = localStorage.getItem('refi-theme') as Theme
-    if (saved) {
-      setTheme(saved)
-      document.documentElement.setAttribute('data-theme', saved)
-    }
+    document.documentElement.setAttribute('data-theme', 'dark')
   }, [])
 
   const toggle = () => {
     const next = theme === 'dark' ? 'light' : 'dark'
     setTheme(next)
-    localStorage.setItem('refi-theme', next)
     document.documentElement.setAttribute('data-theme', next)
+    // Note: NOT persisted to localStorage — resets to dark on page reload
   }
 
   return (

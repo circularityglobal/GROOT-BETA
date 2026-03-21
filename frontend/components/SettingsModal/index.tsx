@@ -92,7 +92,6 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     localStorage.removeItem('refinet_refresh')
     window.dispatchEvent(new Event('refinet-auth-change'))
     onClose()
-    window.location.href = '/'
   }
 
   const handleCreateKey = async () => {
@@ -316,7 +315,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
                         <button onClick={loadData} className="btn-secondary" style={{ fontSize: 12, padding: '8px 16px' }}>
                           Retry
                         </button>
-                        <button onClick={() => { window.location.href = '/settings/' }} className="btn-primary" style={{ fontSize: 12, padding: '8px 16px' }}>
+                        <button onClick={() => { window.location.href = '/login/' }} className="btn-primary" style={{ fontSize: 12, padding: '8px 16px' }}>
                           Sign In Again
                         </button>
                       </div>
@@ -466,7 +465,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <label style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Daily limit</label>
                         <input type="number" className="input-base focus-glow" style={{ width: 100, fontSize: 13 }}
-                          value={keyLimit} onChange={e => setKeyLimit(Number(e.target.value))} min={1} max={10000} />
+                          value={keyLimit} onChange={e => setKeyLimit(Math.min(250, Math.max(1, Number(e.target.value) || 1)))} min={1} max={250} />
                       </div>
                       <button className="btn-primary" onClick={handleCreateKey} disabled={!keyName.trim()}
                         style={{ fontSize: 12, padding: '8px 16px', width: 'fit-content' }}>Create Key</button>

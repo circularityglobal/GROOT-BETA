@@ -88,7 +88,7 @@ export default function GrootChatWidget() {
           style={{ background: 'var(--refi-teal)', boxShadow: 'var(--shadow-glow)' }}
           aria-label="Chat with Groot"
         >
-          <img src="/refi-logo.png" alt="Groot" className="w-8 h-8 rounded-full" />
+          <img src="/refi-logo.png" alt="Groot" className="w-8 h-8" />
         </button>
       )}
 
@@ -105,8 +105,8 @@ export default function GrootChatWidget() {
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0" style={{ boxShadow: '0 0 12px var(--refi-teal-glow)' }}>
-                <img src="/refi-logo.png" alt="Groot" className="w-full h-full object-cover" />
+              <div className="w-9 h-9 flex-shrink-0 flex items-center justify-center">
+                <img src="/refi-logo.png" alt="Groot" className="w-full h-full object-contain" />
               </div>
               <div>
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Groot</div>
@@ -131,7 +131,7 @@ export default function GrootChatWidget() {
                 {msg.role === 'assistant' ? (
                   <div>
                     <div className="flex items-center gap-2 mb-1.5">
-                      <img src="/refi-logo.png" alt="" className="w-4 h-4 rounded-full" />
+                      <img src="/refi-logo.png" alt="" className="w-4 h-4" />
                       <span className="text-[11px] font-mono" style={{ color: 'var(--text-tertiary)' }}>Groot</span>
                     </div>
                     <div className="text-[13px] leading-relaxed pl-6" style={{

@@ -11,7 +11,7 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     const token = localStorage.getItem('refinet_token')
-    if (!token) { window.location.href = '/settings/'; return }
+    
 
     const headers = { Authorization: `Bearer ${token}` }
 

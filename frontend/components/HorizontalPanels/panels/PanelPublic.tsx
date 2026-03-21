@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
+import Link from 'next/link'
 
 interface PanelPublicProps {
   isActive: boolean
@@ -104,11 +105,12 @@ export default function PanelPublic({ isActive }: PanelPublicProps) {
               {'>'} for_everyone
             </p>
             <h2 className="text-3xl md:text-5xl font-extrabold tracking-tighter mb-4" style={{ letterSpacing: '-0.04em' }}>
-              Your sovereign AI assistant
+              Intelligence that<br />
+              <span style={{ color: 'var(--refi-teal)' }}>serves everyone</span>
             </h2>
             <p className="text-base md:text-lg max-w-lg mx-auto" style={{ color: 'var(--text-secondary)' }}>
               Free forever. No account required. No data harvesting.
-              Just intelligence that respects your sovereignty.
+              Sovereign AI that respects your autonomy and works for the commons.
             </p>
           </motion.div>
 
@@ -148,9 +150,9 @@ export default function PanelPublic({ isActive }: PanelPublicProps) {
             transition={{ delay: 0.8, duration: 0.4 }}
             className="text-center mt-10"
           >
-            <a href="/chat/" className="btn-primary !py-3 !px-8 font-mono text-sm">
+            <Link href="/chat/" className="btn-primary !py-3 !px-8 font-mono text-sm" prefetch={true}>
               {'>'} Start Chatting — Free
-            </a>
+            </Link>
             <p className="text-[11px] font-mono mt-3" style={{ color: 'var(--text-tertiary)' }}>
               No sign-up. No credit card. Just open and talk.
             </p>

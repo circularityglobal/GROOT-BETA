@@ -75,7 +75,7 @@ export default function PipelinePage() {
 
   useEffect(() => {
     const token = localStorage.getItem('refinet_token')
-    if (!token) { window.location.href = '/settings/'; return }
+    
     fetchPipelines()
   }, [fetchPipelines])
 

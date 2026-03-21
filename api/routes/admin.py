@@ -188,7 +188,11 @@ def update_user_role(
     request: Request,
     int_db: Session = Depends(internal_db_dependency),
 ):
-    admin_id, admin_name = _require_admin(request, int_db)
+    # Granting/revoking master_admin requires master_admin (wallet-gated)
+    if req.role == "master_admin":
+        admin_id, admin_name = _require_master_admin(request, int_db)
+    else:
+        admin_id, admin_name = _require_admin(request, int_db)
     ip = request.client.host if request.client else None
 
     if req.action == "grant":
@@ -387,6 +391,108 @@ def update_system_config(body: dict, request: Request, int_db: Session = Depends
             updated_by=admin_name,
         ))
     return {"message": f"Config '{body['key']}' updated"}
+
+
+# ── Tab Visibility ────────────────────────────────────────────────
+
+DEFAULT_TAB_VISIBILITY = {
+    "dashboard": True,
+    "chat": True,
+    "agents": True,
+    "knowledge": True,
+    "devices": True,
+    "messages": True,
+    "network": True,
+    "pipeline": True,
+    "deployments": True,
+    "dapp": True,
+    "projects": True,
+    "explore": True,
+    "store": True,
+    "repo": True,
+    "webhooks": True,
+    "payments": True,
+    "help": True,
+    "admin": True,
+}
+
+
+@router.get("/tab-visibility")
+def get_tab_visibility(int_db: Session = Depends(internal_db_dependency)):
+    """
+    Public endpoint — returns which tabs are enabled/disabled.
+    No auth required (frontend layout needs this at boot time).
+    """
+    config = int_db.query(SystemConfig).filter(
+        SystemConfig.key == "tab_visibility"
+    ).first()
+    if not config:
+        return {"tabs": DEFAULT_TAB_VISIBILITY}
+    try:
+        stored = json.loads(config.value)
+        # Merge with defaults so new tabs are visible by default
+        merged = {**DEFAULT_TAB_VISIBILITY, **stored}
+        return {"tabs": merged}
+    except (json.JSONDecodeError, TypeError):
+        return {"tabs": DEFAULT_TAB_VISIBILITY}
+
+
+@router.put("/tab-visibility")
+def update_tab_visibility(body: dict, request: Request, int_db: Session = Depends(internal_db_dependency)):
+    """Master admin only: update tab visibility settings."""
+    admin_id, admin_name = _require_master_admin(request, int_db)
+    tabs = body.get("tabs", {})
+
+    # Validate: only known tab keys, only boolean values
+    valid_keys = set(DEFAULT_TAB_VISIBILITY.keys())
+    cleaned = {}
+    for k, v in tabs.items():
+        if k in valid_keys and isinstance(v, bool):
+            cleaned[k] = v
+
+    # Always keep admin visible
+    cleaned["admin"] = True
+
+    # Merge with current config
+    existing = int_db.query(SystemConfig).filter(SystemConfig.key == "tab_visibility").first()
+    if existing:
+        try:
+            current = json.loads(existing.value)
+        except (json.JSONDecodeError, TypeError):
+            current = dict(DEFAULT_TAB_VISIBILITY)
+        current.update(cleaned)
+        existing.value = json.dumps(current)
+        existing.updated_at = datetime.now(timezone.utc)
+        existing.updated_by = admin_name
+        final_tabs = current
+    else:
+        merged = {**DEFAULT_TAB_VISIBILITY, **cleaned}
+        int_db.add(SystemConfig(
+            key="tab_visibility",
+            value=json.dumps(merged),
+            data_type="json",
+            description="Controls which platform tabs are visible to non-admin users",
+            updated_by=admin_name,
+        ))
+        final_tabs = merged
+
+    # Audit log
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="UPDATE_TAB_VISIBILITY",
+        target_type="system_config",
+        target_id="tab_visibility",
+        details=json.dumps({"changes": cleaned}),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    ))
+
+    # Invalidate middleware cache so changes take effect immediately
+    from api.middleware.tab_gate import invalidate_tab_cache
+    invalidate_tab_cache()
+
+    return {"message": "Tab visibility updated", "tabs": final_tabs}
 
 
 # ── Stats ──────────────────────────────────────────────────────────
@@ -1439,6 +1545,13 @@ def onboarding_stats(
         User.last_login_at < month_ago,
     ).count()
 
+    # CIFI Federation stats
+    cifi_verified = pub_db.query(User).filter(User.cifi_verified == True).count()  # noqa
+    cifi_kyc = pub_db.query(User).filter(
+        User.cifi_kyc_level.isnot(None),
+        User.cifi_kyc_level != "",
+    ).count()
+
     return {
         "total_users": total,
         "funnel": {
@@ -1447,6 +1560,7 @@ def onboarding_stats(
             "password_set": layer_1,
             "totp_enabled": layer_2,
             "fully_onboarded": full,
+            "cifi_verified": cifi_verified,
         },
         "rates": {
             "email_capture_pct": round(with_email / total * 100, 1) if total > 0 else 0,
@@ -1454,10 +1568,16 @@ def onboarding_stats(
             "totp_enabled_pct": round(layer_2 / total * 100, 1) if total > 0 else 0,
             "full_onboarding_pct": round(full / total * 100, 1) if total > 0 else 0,
             "marketing_consent_pct": round(consented / total * 100, 1) if total > 0 else 0,
+            "cifi_verified_pct": round(cifi_verified / total * 100, 1) if total > 0 else 0,
         },
         "marketing": {
             "consented": consented,
             "total_with_email": with_email,
+        },
+        "cifi_federation": {
+            "verified_users": cifi_verified,
+            "verification_rate_pct": round(cifi_verified / total * 100, 1) if total > 0 else 0,
+            "kyc_verified": cifi_kyc,
         },
         "activity": {
             "signups_last_7d": recent_signups,
@@ -1784,3 +1904,271 @@ def deactivate_chain(
     from api.services.chain_registry import ChainRegistry
     ChainRegistry.get().invalidate_cache()
     return {"chain_id": chain_id, "status": "deactivated"}
+
+
+# ── Rate Limit Administration ─────────────────────────────────────
+
+
+@router.get("/rate-limits")
+def get_rate_limits(
+    request: Request,
+    int_db: Session = Depends(internal_db_dependency),
+):
+    """View platform-wide rate limit configuration and API key usage stats."""
+    _require_admin(request, int_db)
+
+    settings = get_settings()
+
+    # Active key stats
+    from api.models.public import ApiKey
+    from api.database import get_public_db
+    with get_public_db() as pub_db:
+        total_keys = pub_db.query(ApiKey).filter(ApiKey.is_active == True).count()  # noqa
+        keys_at_limit = pub_db.query(ApiKey).filter(
+            ApiKey.is_active == True,  # noqa
+            ApiKey.requests_today >= ApiKey.daily_limit,
+        ).count()
+        total_requests_today = pub_db.query(
+            sqlfunc.sum(ApiKey.requests_today)
+        ).filter(ApiKey.is_active == True).scalar() or 0  # noqa
+
+    return {
+        "platform_config": {
+            "max_daily_limit_per_key": settings.max_daily_limit_per_key,
+            "free_tier_daily_requests": settings.free_tier_daily_requests,
+            "anonymous_daily_requests": settings.anonymous_daily_requests,
+            "anonymous_rate_per_minute": settings.anonymous_rate_per_minute,
+            "rate_limit_per_minute": settings.rate_limit_per_minute,
+        },
+        "active_keys": {
+            "total": total_keys,
+            "at_daily_limit": keys_at_limit,
+            "total_requests_today": total_requests_today,
+        },
+    }
+
+
+# ── Infrastructure Nodes ──────────────────────────────────────────
+
+@router.get("/infrastructure/nodes")
+def list_infra_nodes(request: Request, int_db: Session = Depends(internal_db_dependency)):
+    """List all infrastructure nodes."""
+    _require_admin(request, int_db)
+    from api.models.internal import InfraNode
+    nodes = int_db.query(InfraNode).order_by(InfraNode.created_at.desc()).all()
+    return [
+        {
+            "id": n.id, "name": n.name, "provider": n.provider,
+            "region": n.region, "instance_type": n.instance_type,
+            "instance_id": n.instance_id, "compartment_id": n.compartment_id,
+            "public_ip": n.public_ip, "private_ip": n.private_ip,
+            "ssh_port": n.ssh_port,
+            "cpu_count": n.cpu_count, "memory_gb": n.memory_gb, "disk_gb": n.disk_gb,
+            "role": n.role, "services": json.loads(n.services) if n.services else [],
+            "status": n.status,
+            "api_endpoint": n.api_endpoint,
+            "last_health_check": n.last_health_check.isoformat() if n.last_health_check else None,
+            "last_health_status": n.last_health_status,
+            "health_check_latency_ms": n.health_check_latency_ms,
+            "notes": n.notes,
+            "added_by": n.added_by,
+            "created_at": n.created_at.isoformat() if n.created_at else None,
+        }
+        for n in nodes
+    ]
+
+
+@router.post("/infrastructure/nodes")
+def add_infra_node(body: dict, request: Request, int_db: Session = Depends(internal_db_dependency)):
+    """Master admin: register a new infrastructure node."""
+    admin_id, admin_name = _require_master_admin(request, int_db)
+    from api.models.internal import InfraNode
+
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="'name' is required")
+
+    existing = int_db.query(InfraNode).filter(InfraNode.name == name).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Node '{name}' already exists")
+
+    services = body.get("services", [])
+    node = InfraNode(
+        name=name,
+        provider=body.get("provider", "oracle_cloud"),
+        region=body.get("region"),
+        instance_type=body.get("instance_type"),
+        instance_id=body.get("instance_id"),
+        compartment_id=body.get("compartment_id"),
+        public_ip=body.get("public_ip"),
+        private_ip=body.get("private_ip"),
+        ssh_port=body.get("ssh_port", 22),
+        cpu_count=body.get("cpu_count"),
+        memory_gb=body.get("memory_gb"),
+        disk_gb=body.get("disk_gb"),
+        role=body.get("role", "worker"),
+        services=json.dumps(services) if services else None,
+        status=body.get("status", "provisioning"),
+        api_endpoint=body.get("api_endpoint"),
+        notes=body.get("notes"),
+        added_by=admin_name,
+    )
+    int_db.add(node)
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="ADD_INFRA_NODE",
+        target_type="infra_node",
+        target_id=name,
+        details=json.dumps({"provider": node.provider, "region": node.region, "role": node.role, "ip": node.public_ip}),
+        ip_address=request.client.host if request.client else None,
+    ))
+
+    int_db.flush()
+    return {"message": f"Node '{name}' registered", "id": node.id}
+
+
+@router.put("/infrastructure/nodes/{node_id}")
+def update_infra_node(node_id: str, body: dict, request: Request, int_db: Session = Depends(internal_db_dependency)):
+    """Master admin: update a node's config or status."""
+    admin_id, admin_name = _require_master_admin(request, int_db)
+    from api.models.internal import InfraNode
+
+    node = int_db.query(InfraNode).filter(InfraNode.id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    updatable = [
+        "name", "provider", "region", "instance_type", "instance_id",
+        "compartment_id", "public_ip", "private_ip", "ssh_port",
+        "cpu_count", "memory_gb", "disk_gb", "role", "status",
+        "api_endpoint", "notes",
+    ]
+    changes = {}
+    for key in updatable:
+        if key in body:
+            setattr(node, key, body[key])
+            changes[key] = body[key]
+
+    if "services" in body:
+        node.services = json.dumps(body["services"]) if body["services"] else None
+        changes["services"] = body["services"]
+
+    node.updated_at = datetime.now(timezone.utc)
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="UPDATE_INFRA_NODE",
+        target_type="infra_node",
+        target_id=node.name,
+        details=json.dumps(changes),
+        ip_address=request.client.host if request.client else None,
+    ))
+
+    return {"message": f"Node '{node.name}' updated"}
+
+
+@router.delete("/infrastructure/nodes/{node_id}")
+def remove_infra_node(node_id: str, request: Request, int_db: Session = Depends(internal_db_dependency)):
+    """Master admin: remove a node (soft-delete via status=terminated)."""
+    admin_id, admin_name = _require_master_admin(request, int_db)
+    from api.models.internal import InfraNode
+
+    node = int_db.query(InfraNode).filter(InfraNode.id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    node.status = "terminated"
+    node.updated_at = datetime.now(timezone.utc)
+
+    int_db.add(AdminAuditLog(
+        id=str(uuid.uuid4()),
+        admin_username=admin_name,
+        action="REMOVE_INFRA_NODE",
+        target_type="infra_node",
+        target_id=node.name,
+        details=json.dumps({"action": "terminated"}),
+        ip_address=request.client.host if request.client else None,
+    ))
+
+    return {"message": f"Node '{node.name}' terminated"}
+
+
+@router.post("/infrastructure/nodes/{node_id}/health")
+def check_node_health(node_id: str, request: Request, int_db: Session = Depends(internal_db_dependency)):
+    """Admin: run a health check against a node's API endpoint."""
+    _require_admin(request, int_db)
+    from api.models.internal import InfraNode
+    import time as _time
+
+    node = int_db.query(InfraNode).filter(InfraNode.id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    if not node.api_endpoint:
+        return {"status": "skipped", "reason": "No API endpoint configured"}
+
+    # Ping the node's health endpoint
+    import urllib.request
+    import urllib.error
+
+    endpoint = node.api_endpoint.rstrip("/") + "/health"
+    start = _time.time()
+    try:
+        req = urllib.request.Request(endpoint, method="GET")
+        req.add_header("User-Agent", "REFINET-Admin-HealthCheck/1.0")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            latency = int((_time.time() - start) * 1000)
+            status_code = resp.status
+            node.last_health_check = datetime.now(timezone.utc)
+            node.last_health_status = "healthy" if status_code == 200 else "degraded"
+            node.health_check_latency_ms = latency
+            return {
+                "status": node.last_health_status,
+                "latency_ms": latency,
+                "http_status": status_code,
+                "endpoint": endpoint,
+            }
+    except urllib.error.URLError as e:
+        latency = int((_time.time() - start) * 1000)
+        node.last_health_check = datetime.now(timezone.utc)
+        node.last_health_status = "unhealthy"
+        node.health_check_latency_ms = latency
+        return {"status": "unhealthy", "latency_ms": latency, "error": str(e.reason)}
+    except Exception as e:
+        node.last_health_check = datetime.now(timezone.utc)
+        node.last_health_status = "timeout"
+        return {"status": "timeout", "error": str(e)}
+
+
+@router.get("/infrastructure/stats")
+def infra_stats(request: Request, int_db: Session = Depends(internal_db_dependency)):
+    """Admin: get infrastructure overview stats."""
+    _require_admin(request, int_db)
+    from api.models.internal import InfraNode
+    from sqlalchemy import func as sa_func
+
+    nodes = int_db.query(InfraNode).filter(InfraNode.status != "terminated").all()
+    total_cpu = sum(n.cpu_count or 0 for n in nodes)
+    total_mem = sum(n.memory_gb or 0 for n in nodes)
+    total_disk = sum(n.disk_gb or 0 for n in nodes)
+
+    by_status = {}
+    by_role = {}
+    by_provider = {}
+    for n in nodes:
+        by_status[n.status] = by_status.get(n.status, 0) + 1
+        by_role[n.role] = by_role.get(n.role, 0) + 1
+        by_provider[n.provider] = by_provider.get(n.provider, 0) + 1
+
+    return {
+        "total_nodes": len(nodes),
+        "total_cpu": total_cpu,
+        "total_memory_gb": total_mem,
+        "total_disk_gb": total_disk,
+        "by_status": by_status,
+        "by_role": by_role,
+        "by_provider": by_provider,
+    }

@@ -4,17 +4,19 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, useAnimation } from 'framer-motion'
 import PanelIndicator from './PanelIndicator'
 import PanelHero from './panels/PanelHero'
+import PanelMission from './panels/PanelMission'
+import PanelInfrastructure from './panels/PanelInfrastructure'
 import PanelDeveloper from './panels/PanelDeveloper'
 import PanelPublic from './panels/PanelPublic'
 import PanelBrowser from './panels/PanelBrowser'
 import PanelAgentOS from './panels/PanelAgentOS'
 
-const TOTAL_PANELS = 5
+const TOTAL_PANELS = 7
 const COOLDOWN_MS = 800
 const WHEEL_THRESHOLD = 30
 const TOUCH_THRESHOLD = 80
 
-const PANEL_LABELS = ['Hero', 'Developers', 'Productivity', 'Browser', 'AgentOS']
+const PANEL_LABELS = ['Hero', 'Mission', 'Infrastructure', 'Developers', 'For Everyone', 'Browser', 'AgentOS']
 
 export default function HorizontalPanels() {
   const [currentPanel, setCurrentPanel] = useState(0)
@@ -119,10 +121,12 @@ export default function HorizontalPanels() {
         style={{ width: `${TOTAL_PANELS * 100}vw` }}
       >
         <PanelHero isActive={currentPanel === 0} onNext={next} />
-        <PanelDeveloper isActive={currentPanel === 1} />
-        <PanelPublic isActive={currentPanel === 2} />
-        <PanelBrowser isActive={currentPanel === 3} />
-        <PanelAgentOS isActive={currentPanel === 4} />
+        <PanelMission isActive={currentPanel === 1} />
+        <PanelInfrastructure isActive={currentPanel === 2} />
+        <PanelDeveloper isActive={currentPanel === 3} />
+        <PanelPublic isActive={currentPanel === 4} />
+        <PanelBrowser isActive={currentPanel === 5} />
+        <PanelAgentOS isActive={currentPanel === 6} />
       </motion.div>
 
       <PanelIndicator

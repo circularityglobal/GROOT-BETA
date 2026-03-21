@@ -47,6 +47,7 @@ from api.schemas.auth import (
     WalletIdentityResponse, WalletIdentityListResponse, UpdateIdentityRequest,
     WalletSessionResponse, WalletSessionListResponse,
     SupportedChainsResponse, ChainInfoResponse,
+    CIFIRegisterRequest, CIFIVerifyResponse,
 )
 from api.services.wallet_service import (
     create_custodial_wallet, sign_message_with_custodial_wallet,
@@ -270,6 +271,10 @@ def _build_user_profile(user, db) -> UserProfile:
     """Build UserProfile response from a User model instance."""
     identities = get_user_identities(db, user.id)
     identity_responses = [_identity_to_response(i) for i in identities]
+    cifi_verified = getattr(user, 'cifi_verified', False) or False
+    cifi_username = getattr(user, 'cifi_username', None)
+    cifi_display_name = getattr(user, 'cifi_display_name', None)
+
     return UserProfile(
         id=user.id,
         username=user.username,
@@ -284,6 +289,11 @@ def _build_user_profile(user, db) -> UserProfile:
         last_login_at=user.last_login_at,
         marketing_consent=user.marketing_consent or False,
         onboarding_completed_at=getattr(user, 'onboarding_completed_at', None),
+        cifi_verified=cifi_verified,
+        cifi_username=cifi_username,
+        cifi_display_name=cifi_display_name,
+        cifi_kyc_level=getattr(user, 'cifi_kyc_level', None),
+        display_name=cifi_display_name if cifi_verified else None,
         identities=identity_responses,
     )
 
@@ -304,6 +314,11 @@ def update_profile(
     payload, user = _get_current_user(request, db)
 
     if req.username:
+        if getattr(user, 'cifi_verified', False):
+            raise HTTPException(
+                status_code=409,
+                detail="Username is managed by CIFI federation and cannot be changed locally. Disconnect CIFI identity first.",
+            )
         existing = db.query(User).filter(
             User.username == req.username, User.id != user.id
         ).first()
@@ -808,3 +823,152 @@ def custodial_siwe_login(
         message="Signed in with custodial wallet.",
         identity=_identity_to_response(identity),
     )
+
+
+# ── CIFI Federation ──────────────────────────────────────────────
+
+
+@router.post("/cifi/verify", response_model=CIFIVerifyResponse)
+def cifi_verify(request: Request, db: Session = Depends(public_db_dependency)):
+    """
+    Verify wallet against CIFI Federated Identity.
+    Auto-detects if wallet is registered on CIFI and pulls @username.
+    """
+    payload, user = _get_current_user(request, db)
+
+    if not user.eth_address:
+        raise HTTPException(status_code=400, detail="No wallet address linked to this account")
+
+    from api.services.cifi_federation import (
+        validate_wallet, get_verification_status, store_cifi_verification,
+    )
+
+    try:
+        result = validate_wallet(user.eth_address)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    if not result.get("registered"):
+        return CIFIVerifyResponse(
+            verified=False,
+            registered=False,
+            profile=_build_user_profile(user, db),
+        )
+
+    cifi_data = result.get("data", {})
+
+    # Fetch KYC status (public endpoint, best-effort)
+    kyc_data = get_verification_status(user.eth_address)
+
+    try:
+        updated_user = store_cifi_verification(db, user.id, cifi_data, kyc_data)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return CIFIVerifyResponse(
+        verified=True,
+        registered=True,
+        cifi_username=updated_user.cifi_username,
+        cifi_display_name=updated_user.cifi_display_name,
+        cifi_kyc_level=updated_user.cifi_kyc_level,
+        profile=_build_user_profile(updated_user, db),
+    )
+
+
+@router.post("/cifi/register", response_model=CIFIVerifyResponse)
+def cifi_register(
+    req: CIFIRegisterRequest,
+    request: Request,
+    db: Session = Depends(public_db_dependency),
+):
+    """
+    Register a new CIFI identity for this wallet, then auto-verify.
+    Username must be 5-15 chars, lowercase alphanumeric/underscore/hyphen.
+    """
+    payload, user = _get_current_user(request, db)
+
+    if not user.eth_address:
+        raise HTTPException(status_code=400, detail="No wallet address linked to this account")
+
+    if getattr(user, 'cifi_verified', False):
+        raise HTTPException(status_code=409, detail="Already verified with CIFI")
+
+    from api.services.cifi_federation import (
+        register_identity, validate_wallet,
+        get_verification_status, store_cifi_verification,
+    )
+
+    # Register on CIFI
+    try:
+        register_identity(user.eth_address, req.username)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Now verify (fetch the profile back)
+    try:
+        result = validate_wallet(user.eth_address)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    if not result.get("registered"):
+        raise HTTPException(status_code=502, detail="Registration succeeded but verification failed")
+
+    cifi_data = result.get("data", {})
+    kyc_data = get_verification_status(user.eth_address)
+
+    try:
+        updated_user = store_cifi_verification(db, user.id, cifi_data, kyc_data)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return CIFIVerifyResponse(
+        verified=True,
+        registered=True,
+        cifi_username=updated_user.cifi_username,
+        cifi_display_name=updated_user.cifi_display_name,
+        cifi_kyc_level=updated_user.cifi_kyc_level,
+        profile=_build_user_profile(updated_user, db),
+    )
+
+
+@router.post("/cifi/reverify", response_model=CIFIVerifyResponse)
+def cifi_reverify(request: Request, db: Session = Depends(public_db_dependency)):
+    """Re-check CIFI identity. Revokes local verification if no longer valid."""
+    payload, user = _get_current_user(request, db)
+
+    from api.services.cifi_federation import reverify_cifi_identity
+
+    try:
+        result = reverify_cifi_identity(db, user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Refresh user from DB
+    db.refresh(user)
+
+    return CIFIVerifyResponse(
+        verified=result["verified"],
+        registered=result["verified"],
+        cifi_username=result.get("username"),
+        cifi_display_name=user.cifi_display_name if result["verified"] else None,
+        cifi_kyc_level=user.cifi_kyc_level if result["verified"] else None,
+        profile=_build_user_profile(user, db),
+    )
+
+
+@router.delete("/cifi/verify", response_model=UserProfile)
+def cifi_disconnect(request: Request, db: Session = Depends(public_db_dependency)):
+    """Disconnect CIFI identity and revert to pseudonymous wallet display."""
+    payload, user = _get_current_user(request, db)
+
+    if not getattr(user, 'cifi_verified', False):
+        raise HTTPException(status_code=400, detail="No CIFI identity linked")
+
+    from api.services.cifi_federation import revoke_cifi_verification
+
+    try:
+        updated_user = revoke_cifi_verification(db, user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return _build_user_profile(updated_user, db)

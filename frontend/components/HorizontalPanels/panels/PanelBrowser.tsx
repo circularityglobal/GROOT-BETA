@@ -47,10 +47,15 @@ export default function PanelBrowser({ isActive }: PanelBrowserProps) {
     <div className="w-screen h-full flex-shrink-0 relative overflow-hidden"
       style={{ background: 'var(--bg-primary)' }}>
 
-      {/* Matrix accent - left edge */}
+      {/* Teal accent - left edge */}
       <div className="absolute left-0 top-0 bottom-0 w-32 overflow-hidden opacity-30">
-        {isActive && <MatrixRain color="#00FF41" opacity={0.2} density={16} speed={0.5} />}
+        {isActive && <MatrixRain color="#5CE0D2" opacity={0.15} density={16} speed={0.5} />}
       </div>
+
+      {/* Radial teal glow */}
+      <div className="absolute inset-0 pointer-events-none" style={{
+        background: 'radial-gradient(ellipse 50% 40% at 40% 45%, rgba(92,224,210,0.06) 0%, transparent 70%)',
+      }} />
 
       <div className="relative z-10 flex flex-col items-center justify-center h-full px-6 py-12">
         <div className="max-w-5xl w-full">
@@ -61,12 +66,12 @@ export default function PanelBrowser({ isActive }: PanelBrowserProps) {
             transition={{ duration: 0.5 }}
             className="text-center mb-10"
           >
-            <p className="text-[12px] font-mono uppercase tracking-widest mb-3" style={{ color: 'var(--matrix-green)' }}>
+            <p className="text-[12px] font-mono uppercase tracking-widest mb-3" style={{ color: 'var(--refi-teal)' }}>
               {'>'} refinet_browser
             </p>
             <h2 className="text-3xl md:text-5xl font-extrabold tracking-tighter mb-4" style={{ letterSpacing: '-0.04em' }}>
               A browser for the<br />
-              <span className="text-glow-matrix" style={{ color: 'var(--matrix-green)' }}>sovereign internet</span>
+              <span className="text-glow" style={{ color: 'var(--refi-teal)' }}>sovereign internet</span>
             </h2>
             <p className="text-base max-w-lg mx-auto" style={{ color: 'var(--text-secondary)' }}>
               The web was built on openness. REFINET Browser takes it back — decentralized, encrypted, and connected to GROOT.
@@ -83,8 +88,8 @@ export default function PanelBrowser({ isActive }: PanelBrowserProps) {
               className="rounded-xl overflow-hidden"
               style={{
                 background: 'var(--terminal-bg)',
-                border: '1px solid var(--terminal-border)',
-                boxShadow: '0 8px 40px rgba(0,255,65,0.06)',
+                border: '1px solid var(--border-default)',
+                boxShadow: '0 8px 40px rgba(92,224,210,0.06)',
               }}
             >
               {/* Browser chrome */}
@@ -97,10 +102,10 @@ export default function PanelBrowser({ isActive }: PanelBrowserProps) {
                 {/* Address bar */}
                 <div className="flex-1 ml-3 px-3 py-1 rounded-md text-[11px] font-mono flex items-center gap-2"
                   style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}>
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--matrix-green)" strokeWidth="2">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--refi-teal)" strokeWidth="2">
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                   </svg>
-                  <span style={{ color: 'var(--matrix-green)' }}>refinet://</span>
+                  <span style={{ color: 'var(--refi-teal)' }}>refinet://</span>
                   <span style={{ color: 'var(--text-secondary)' }}>sovereign.net</span>
                 </div>
               </div>
@@ -108,7 +113,7 @@ export default function PanelBrowser({ isActive }: PanelBrowserProps) {
               {/* Browser content area */}
               <div className="p-6 min-h-[200px] md:min-h-[280px] relative scanlines">
                 <div className="font-mono text-[12px] space-y-2">
-                  <p style={{ color: 'var(--matrix-green)' }}>
+                  <p style={{ color: 'var(--refi-teal)' }}>
                     ✓ Connected to GROOT Intelligence Network
                   </p>
                   <p style={{ color: 'var(--text-secondary)' }}>
@@ -125,7 +130,7 @@ export default function PanelBrowser({ isActive }: PanelBrowserProps) {
                   </p>
                   <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                     <p style={{ color: 'var(--text-tertiary)' }}>
-                      {'>'} Browsing sovereign web with zero telemetry_<span className="cursor-blink" style={{ color: 'var(--matrix-green)' }}>█</span>
+                      {'>'} Browsing sovereign web with zero telemetry_<span className="cursor-blink" style={{ color: 'var(--refi-teal)' }}>█</span>
                     </p>
                   </div>
                 </div>
@@ -144,9 +149,9 @@ export default function PanelBrowser({ isActive }: PanelBrowserProps) {
                 >
                   <span className="inline-block text-[10px] font-mono font-semibold px-2 py-0.5 rounded mb-2"
                     style={{
-                      color: 'var(--matrix-green)',
-                      background: 'var(--matrix-green-dim)',
-                      border: '1px solid rgba(0,255,65,0.2)',
+                      color: 'var(--refi-teal)',
+                      background: 'var(--refi-teal-glow)',
+                      border: '1px solid rgba(92,224,210,0.2)',
                     }}>
                     [{f.tag}]
                   </span>
@@ -170,11 +175,11 @@ export default function PanelBrowser({ isActive }: PanelBrowserProps) {
           >
             <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full font-mono text-[12px]"
               style={{
-                border: '1px solid rgba(0,255,65,0.2)',
-                color: 'var(--matrix-green)',
-                background: 'rgba(0,255,65,0.05)',
+                border: '1px solid rgba(92,224,210,0.2)',
+                color: 'var(--refi-teal)',
+                background: 'rgba(92,224,210,0.05)',
               }}>
-              <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--matrix-green)' }} />
+              <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--refi-teal)' }} />
               Coming Soon — Join the Waitlist
             </span>
           </motion.div>

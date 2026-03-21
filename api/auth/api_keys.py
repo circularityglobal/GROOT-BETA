@@ -28,6 +28,15 @@ def get_key_prefix(key: str) -> str:
     return key[:12]
 
 
+def _get_max_daily_limit() -> int:
+    """Get the platform-wide max daily limit from settings."""
+    try:
+        from api.config import get_settings
+        return get_settings().max_daily_limit_per_key
+    except Exception:
+        return 250  # Hardcoded fallback — never allow unbounded
+
+
 def create_api_key(
     db: Session,
     user_id: str,
@@ -40,7 +49,18 @@ def create_api_key(
     """
     Create a new API key. Returns (raw_key, db_record).
     The raw_key is returned ONCE — it cannot be recovered after creation.
+
+    daily_limit is clamped to the platform maximum (MAX_DAILY_LIMIT_PER_KEY,
+    default 250). This is enforced server-side regardless of what the caller
+    passes — no route, device registration, or agent can exceed it.
     """
+    # Enforce platform-wide cap on daily requests per key
+    max_limit = _get_max_daily_limit()
+    if daily_limit < 1:
+        daily_limit = 1
+    if daily_limit > max_limit:
+        daily_limit = max_limit
+
     raw_key = generate_api_key(prefix)
 
     record = ApiKey(

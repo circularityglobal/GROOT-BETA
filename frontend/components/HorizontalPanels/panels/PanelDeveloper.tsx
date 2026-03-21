@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
+import Link from 'next/link'
 import TerminalText from '@/components/TerminalText'
 
 interface PanelDeveloperProps {
@@ -166,9 +167,9 @@ export default function PanelDeveloper({ isActive }: PanelDeveloperProps) {
             transition={{ delay: 1, duration: 0.4 }}
             className="text-center mt-8"
           >
-            <a href="/docs/" className="btn-primary !py-2.5 !px-6 font-mono text-sm">
+            <Link href="/docs/" className="btn-primary !py-2.5 !px-6 font-mono text-sm" prefetch={true}>
               {'>'} Full API Documentation
-            </a>
+            </Link>
           </motion.div>
         </div>
       </div>

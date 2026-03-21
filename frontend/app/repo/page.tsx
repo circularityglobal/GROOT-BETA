@@ -118,7 +118,7 @@ export default function RepoPage() {
 
   useEffect(() => {
     const token = localStorage.getItem('refinet_token')
-    if (!token) { window.location.href = '/settings/'; return }
+    
     loadRepo()
   }, [])
 

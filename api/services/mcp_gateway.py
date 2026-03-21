@@ -162,6 +162,53 @@ MCP_TOOLS = {
             "required": ["chain", "address", "function_name"],
         },
     },
+    # ── SDK Gateway Tools (deterministic, no LLM) ─────────────────────
+    "resolve_contract": {
+        "description": "Resolve a smart contract by name, slug, or address. Returns all deployment addresses across all chains. No LLM — instant DB lookup.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Contract name, slug (user/contract), or address (0x...)"},
+                "chain": {"type": "string", "description": "Optional chain filter (ethereum, base, polygon, arbitrum, etc.)"},
+            },
+            "required": ["query"],
+        },
+    },
+    "fetch_sdk": {
+        "description": "Fetch the full public SDK for a smart contract. Supports lookup by chain+address or by slug. Returns functions, events, security summary, and deployments.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "chain": {"type": "string", "description": "Blockchain name (if using address lookup)"},
+                "address": {"type": "string", "description": "Contract address (0x...)"},
+                "slug": {"type": "string", "description": "Contract slug (alternative to chain+address)"},
+                "include_abi": {"type": "boolean", "description": "Include raw ABI JSON in response (default false)"},
+            },
+        },
+    },
+    "list_chains_for_contract": {
+        "description": "List all blockchain networks where a contract is deployed. Quick deployment lookup.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contract_id": {"type": "string", "description": "Contract UUID"},
+                "slug": {"type": "string", "description": "Contract slug (alternative to ID)"},
+            },
+        },
+    },
+    "bulk_sdk_export": {
+        "description": "Export a paginated catalog of all public SDKs for agent discovery and bootstrapping. Compact mode returns names+addresses+chains only.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "chain": {"type": "string", "description": "Optional chain filter"},
+                "category": {"type": "string", "description": "Optional tag/category filter"},
+                "compact": {"type": "boolean", "description": "If true, return only names+addresses+chains (default true)"},
+                "page": {"type": "integer", "description": "Page number (default 1)"},
+                "page_size": {"type": "integer", "description": "Results per page (default 50, max 200)"},
+            },
+        },
+    },
     # ── Script Execution Tool ──────────────────────────────────────────
     "execute_script": {
         "description": "Execute a registered platform script. Returns the script output. Use 'list_scripts' action with no script_name to discover available scripts.",
@@ -478,6 +525,50 @@ async def dispatch_tool(
                         result["warning"] = fn.get("warning", "Restricted function")
                     return {"result": result}
             return {"error": f"Function '{fn_name}' not found in contract SDK"}
+
+        # ── SDK Gateway Tools (deterministic, no LLM) ────────────────
+        elif tool_name == "resolve_contract":
+            from api.services.sdk_gateway import resolve_contract
+            result = resolve_contract(
+                db,
+                query=arguments["query"],
+                chain=arguments.get("chain"),
+            )
+            return {"result": result}
+
+        elif tool_name == "fetch_sdk":
+            from api.services.sdk_gateway import fetch_sdk
+            result = fetch_sdk(
+                db,
+                chain=arguments.get("chain"),
+                address=arguments.get("address"),
+                slug=arguments.get("slug"),
+                include_abi=arguments.get("include_abi", False),
+            )
+            if "error" in result:
+                return {"error": result["error"]}
+            return {"result": result}
+
+        elif tool_name == "list_chains_for_contract":
+            from api.services.sdk_gateway import list_chains_for_contract
+            result = list_chains_for_contract(
+                db,
+                contract_id=arguments.get("contract_id"),
+                slug=arguments.get("slug"),
+            )
+            return {"result": result}
+
+        elif tool_name == "bulk_sdk_export":
+            from api.services.sdk_gateway import bulk_sdk_export
+            result = bulk_sdk_export(
+                db,
+                chain=arguments.get("chain"),
+                category=arguments.get("category"),
+                compact=arguments.get("compact", True),
+                page=arguments.get("page", 1),
+                page_size=arguments.get("page_size", 50),
+            )
+            return {"result": result}
 
         # ── Script Execution Tools ────────────────────────────────────
         elif tool_name == "list_scripts":

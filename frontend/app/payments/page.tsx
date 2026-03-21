@@ -34,7 +34,7 @@ export default function PaymentsPage() {
 
   useEffect(() => {
     const token = localStorage.getItem('refinet_token')
-    if (!token) { window.location.href = '/settings/'; return }
+    
 
     Promise.all([
       fetch(`${API_URL}/payments/fee-schedule`, { headers: headers() }).then(r => r.ok ? r.json() : []).catch(() => []),

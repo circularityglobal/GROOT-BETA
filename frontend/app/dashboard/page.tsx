@@ -1,10 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { API_URL } from '@/lib/config'
 
 export default function DashboardPage() {
+  const router = useRouter()
   const [profile, setProfile] = useState<any>(null)
   const [keys, setKeys] = useState<any[]>([])
   const [devices, setDevices] = useState<any[]>([])
@@ -29,7 +31,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const token = localStorage.getItem('refinet_token')
-    if (!token) { window.location.href = '/settings/'; return }
+    if (!token) return // Layout handles redirect
 
     const headers = { Authorization: `Bearer ${token}` }
 
@@ -48,19 +50,19 @@ export default function DashboardPage() {
                 localStorage.setItem('refinet_token', tokens.access_token)
                 localStorage.setItem('refinet_refresh', tokens.refresh_token)
                 window.dispatchEvent(new Event('refinet-auth-change'))
-                window.location.reload()
+                router.refresh()
                 return null
               })
               .catch(() => {
                 localStorage.removeItem('refinet_token')
                 localStorage.removeItem('refinet_refresh')
-                window.location.href = '/settings/'
+                window.dispatchEvent(new Event('refinet-auth-change'))
                 return null
               })
           }
           localStorage.removeItem('refinet_token')
           localStorage.removeItem('refinet_refresh')
-          window.location.href = '/settings/'
+          window.dispatchEvent(new Event('refinet-auth-change'))
           return null
         }
         if (!r.ok) throw new Error('Profile fetch failed')
@@ -86,11 +88,7 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '60vh' }}>
-        <div style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-tertiary)', fontSize: 13 }} className="animate-pulse">
-          Loading...
-        </div>
-      </div>
+      <div style={{ minHeight: '60vh', background: 'var(--bg-primary)' }} />
     )
   }
 
@@ -98,7 +96,7 @@ export default function DashboardPage() {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', minHeight: '60vh', flexDirection: 'column', gap: 16 }}>
         <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Connect your wallet to continue.</p>
-        <Link href="/settings/" className="btn-primary" style={{ textDecoration: 'none' }}>Sign In</Link>
+        <Link href="/login/" className="btn-primary" style={{ textDecoration: 'none' }}>Sign In</Link>
       </div>
     )
   }
@@ -110,7 +108,7 @@ export default function DashboardPage() {
       {/* Header */}
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text-primary)', margin: 0 }}>
-          {greeting}, {profile.username}
+          {greeting}, {profile.cifi_verified ? `@${profile.cifi_username}` : profile.eth_address ? `${profile.eth_address.slice(0, 6)}...${profile.eth_address.slice(-4)}` : profile.username}
         </h1>
         <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 }}>
           Here&apos;s what&apos;s happening with your infrastructure.
@@ -201,6 +199,11 @@ export default function DashboardPage() {
           </div>
         )) : <EmptyState text="No activity yet. Make an API call to see usage." />}
       </Section>
+
+      {/* Admin Support Queue — only shown for admins */}
+      {(profile.role === 'admin' || profile.role === 'master_admin') && (
+        <SupportQueueCard />
+      )}
 
       <style jsx>{`
         @media (max-width: 768px) {
@@ -314,3 +317,70 @@ function KeyIconStat() { return <svg width="16" height="16" viewBox="0 0 24 24" 
 function DeviceIconStat() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M9 2v2M15 20v2M9 20v2M2 15h2M2 9h2M20 15h2M20 9h2"/></svg> }
 function WebhookIconStat() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 16.98h1.67c1.47 0 2.68-1.2 2.68-2.68V7.35c0-1.47-1.2-2.68-2.68-2.68H4.33C2.87 4.67 1.67 5.87 1.67 7.35v6.95c0 1.47 1.2 2.68 2.68 2.68H6"/><polyline points="12 15 17 20 12 25"/></svg> }
 function TierIconStat() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> }
+
+/* ─── Admin Support Queue ─── */
+
+const PRIO_COLORS: Record<string, string> = { low: '#6B7280', normal: '#3B82F6', high: '#F59E0B', urgent: '#EF4444' }
+const STAT_COLORS: Record<string, string> = { open: '#5CE0D2', in_progress: '#F59E0B', waiting_on_user: '#F97316' }
+
+function SupportQueueCard() {
+  const [stats, setStats] = useState<any>(null)
+
+  useEffect(() => {
+    const t = localStorage.getItem('refinet_token')
+    if (!t) return
+    fetch(`${API_URL}/support/admin/stats`, { headers: { Authorization: `Bearer ${t}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setStats(d) })
+      .catch(() => {})
+  }, [])
+
+  if (!stats) return null
+
+  const hasTickets = stats.open > 0 || stats.in_progress > 0
+
+  return (
+    <div style={{ marginTop: 16, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Support Queue</span>
+          {hasTickets && (
+            <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: 'rgba(239,68,68,0.15)', color: '#EF4444' }}>
+              {stats.open + stats.in_progress}
+            </span>
+          )}
+        </div>
+        <a href="/help/" style={{ fontSize: 11, color: 'var(--refi-teal)', textDecoration: 'none' }}>View All</a>
+      </div>
+
+      <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Open: <strong style={{ color: '#5CE0D2' }}>{stats.open}</strong></div>
+        <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>In Progress: <strong style={{ color: '#F59E0B' }}>{stats.in_progress}</strong></div>
+        <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Waiting: <strong style={{ color: '#F97316' }}>{stats.waiting_on_user}</strong></div>
+        <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Resolved: <strong style={{ color: '#22C55E' }}>{stats.resolved}</strong></div>
+        {stats.avg_resolution_hours !== null && (
+          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Avg Resolution: <strong style={{ color: 'var(--text-secondary)' }}>{stats.avg_resolution_hours}h</strong></div>
+        )}
+      </div>
+
+      {stats.recent && stats.recent.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {stats.recent.map((t: any) => (
+            <a key={t.id} href={`/help/`} style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 6, background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', fontFamily: "'JetBrains Mono', monospace" }}>#{t.ticket_number}</span>
+                <span style={{ fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 }}>{t.subject}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 8, background: `${PRIO_COLORS[t.priority] || '#6B7280'}15`, color: PRIO_COLORS[t.priority] || '#6B7280' }}>{t.priority}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{t.user_name || 'User'}</span>
+              </div>
+            </a>
+          ))}
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'center', padding: '8px 0' }}>No open support tickets</div>
+      )}
+    </div>
+  )
+}

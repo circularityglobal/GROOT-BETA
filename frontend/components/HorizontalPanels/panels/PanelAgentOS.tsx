@@ -195,9 +195,9 @@ export default function PanelAgentOS({ isActive }: PanelAgentOSProps) {
             style={{ borderTop: '1px solid var(--border-subtle)' }}
           >
             <div className="flex items-center gap-2">
-              <img src="/refi-logo.png" alt="" className="w-4 h-4 rounded-full" />
+              <img src="/refi-logo.png" alt="" className="w-4 h-4" />
               <span className="text-[11px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
-                REFINET Cloud · Regenerative Finance Network
+                REFINET Cloud · Sovereign Infrastructure for a Regenerative Internet
               </span>
             </div>
             <div className="flex items-center gap-4 text-[11px] font-mono" style={{ color: 'var(--text-tertiary)' }}>

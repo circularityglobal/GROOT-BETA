@@ -137,6 +137,11 @@ async def lifespan(app: FastAPI):
 
     bus.subscribe("registry.sdk.*", _on_sdk_publish)
     bus.subscribe("registry.visibility.*", _on_sdk_publish)
+    # SDK Gateway — invalidate catalog cache on contract/SDK changes
+    from api.services.sdk_gateway import invalidate_sdk_cache
+    bus.subscribe("registry.sdk.*", invalidate_sdk_cache)
+    bus.subscribe("registry.abi.*", invalidate_sdk_cache)
+    bus.subscribe("registry.visibility.*", invalidate_sdk_cache)
     # Chain events — on-chain events detected by watchers → WS broadcast + webhook delivery
     bus.subscribe("chain.*", ws_manager.broadcast_event)
     bus.subscribe("chain.*", deliver_bus_event)
@@ -149,6 +154,9 @@ async def lifespan(app: FastAPI):
     # Broker events — session lifecycle → WS + webhooks
     bus.subscribe("broker.*", ws_manager.broadcast_event)
     bus.subscribe("broker.*", deliver_bus_event)
+    # Support events — ticket lifecycle → WS + webhooks
+    bus.subscribe("support.*", ws_manager.broadcast_event)
+    bus.subscribe("support.*", deliver_bus_event)
     # Trigger router — maps events to agent tasks automatically
     from api.services.trigger_router import register_all_triggers
     register_all_triggers(bus)
@@ -236,6 +244,8 @@ def create_app() -> FastAPI:
     app.add_middleware(LoggingMiddleware)
     from api.middleware.response_cache import ResponseCacheMiddleware
     app.add_middleware(ResponseCacheMiddleware)
+    from api.middleware.tab_gate import TabGateMiddleware
+    app.add_middleware(TabGateMiddleware)
     app.add_middleware(RequestSizeMiddleware)
     from api.middleware.request_id import RequestIDMiddleware
     app.add_middleware(RequestIDMiddleware)
@@ -321,6 +331,10 @@ def create_app() -> FastAPI:
     # ── Submission Review Pipeline (must be before app_store — has /apps prefix too) ──
     from api.routes.submissions import router as submissions_router
     app.include_router(submissions_router)
+
+    # ── Support / Help Desk Routes ────────────────────────────────
+    from api.routes.support import router as support_router
+    app.include_router(support_router)
 
     # ── App Store Routes (has {slug:path} catch-all — must be LAST /apps router) ──
     from api.routes.app_store import router as app_store_router

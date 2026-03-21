@@ -30,11 +30,29 @@ def create_key(
 ):
     """Create a new API key. Requires SIWE + Email/Password + TOTP."""
     user_id, _ = require_full_auth(request, db, scope=SCOPE_KEYS_WRITE)
+
+    # Validate and cap daily_limit server-side
+    from api.config import get_settings
+    settings = get_settings()
+    max_limit = settings.max_daily_limit_per_key
+    requested_limit = body.get("daily_limit", 250)
+    try:
+        requested_limit = int(requested_limit)
+    except (ValueError, TypeError):
+        requested_limit = 250
+    if requested_limit < 1:
+        requested_limit = 1
+    if requested_limit > max_limit:
+        raise HTTPException(
+            status_code=400,
+            detail=f"daily_limit cannot exceed {max_limit} requests per day."
+        )
+
     raw_key, record = create_api_key(
         db, user_id,
         name=body.get("name", "default"),
         scopes=body.get("scopes", "inference:read"),
-        daily_limit=body.get("daily_limit", 100),
+        daily_limit=requested_limit,
     )
     return {
         "id": record.id,

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { API_URL } from '@/lib/config'
 
@@ -8,6 +9,7 @@ const CATEGORIES = ['defi', 'token', 'governance', 'bridge', 'utility', 'oracle'
 const CHAINS = ['ethereum', 'base', 'arbitrum', 'polygon', 'solana', 'multi-chain']
 
 export default function NewProjectPage() {
+  const router = useRouter()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [readme, setReadme] = useState('')
@@ -22,18 +24,13 @@ export default function NewProjectPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    const token = localStorage.getItem('refinet_token')
-    if (!token) window.location.href = '/settings/'
-  }, [])
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     setSubmitting(true)
 
     const token = localStorage.getItem('refinet_token')
-    if (!token) { window.location.href = '/settings/'; return }
+    if (!token) return
 
     // Validate ABI JSON if provided
     if (abiJson) {
@@ -90,7 +87,7 @@ export default function NewProjectPage() {
         }
       }
 
-      window.location.href = `/registry/${project.slug}/`
+      router.push(`/registry/${project.slug}/`)
     } catch (err: any) {
       setError(err.message || 'An error occurred')
       setSubmitting(false)

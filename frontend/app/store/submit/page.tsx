@@ -26,6 +26,10 @@ export default function SubmitPage() {
   const [selectedSub, setSelectedSub] = useState<any>(null)
   const [msg, setMsg] = useState('')
 
+  // CIFI identity gate
+  const [profile, setProfile] = useState<any>(null)
+  const [profileLoading, setProfileLoading] = useState(true)
+
   // New submission form
   const [form, setForm] = useState({
     name: '', description: '', category: 'dapp', chain: '', version: '1.0.0',
@@ -37,7 +41,16 @@ export default function SubmitPage() {
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    setToken(localStorage.getItem('refinet_token') || '')
+    const t = localStorage.getItem('refinet_token') || ''
+    setToken(t)
+    if (t) {
+      fetch(`${API_URL}/auth/me`, { headers: { Authorization: `Bearer ${t}` } })
+        .then(r => r.ok ? r.json() : null)
+        .then(p => { if (p) setProfile(p); setProfileLoading(false) })
+        .catch(() => setProfileLoading(false))
+    } else {
+      setProfileLoading(false)
+    }
   }, [])
 
   const headers: Record<string, string> = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
@@ -178,8 +191,39 @@ export default function SubmitPage() {
         <div className="mb-4 px-3 py-2 rounded text-xs" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}>{msg}</div>
       )}
 
+      {/* CIFI Identity Gate */}
+      {!profileLoading && profile && !profile.cifi_verified && tab === 'new' && (
+        <div className="mb-6 p-5 rounded-xl" style={{ background: 'rgba(250,204,21,0.08)', border: '1px solid rgba(250,204,21,0.3)' }}>
+          <div className="flex items-start gap-3">
+            <span style={{ fontSize: 24, flexShrink: 0 }}>{'\uD83D\uDEE1\uFE0F'}</span>
+            <div>
+              <h3 className="text-sm font-bold mb-1" style={{ color: 'rgb(250,204,21)' }}>
+                CIFI Identity Verification Required
+              </h3>
+              <p className="text-xs mb-3" style={{ color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                To submit apps to the REFINET App Store, you must have a verified <strong>@username</strong> from{' '}
+                <strong style={{ color: 'var(--refi-teal)' }}>CIFI.GLOBAL</strong>.
+                This ensures all apps in the store are linked to a verifiable identity for user safety and accountability.
+              </p>
+              <div className="flex gap-2">
+                <Link href="/dashboard" className="px-3 py-1.5 text-xs font-semibold rounded-lg" style={{
+                  background: 'var(--refi-teal)', color: 'var(--bg-primary)', textDecoration: 'none',
+                }}>
+                  Verify Identity
+                </Link>
+                <a href="https://cifi.global" target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 text-xs rounded-lg" style={{
+                  background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', textDecoration: 'none', border: '1px solid var(--border-default)',
+                }}>
+                  Learn about CIFI
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* New Submission Form */}
-      {tab === 'new' && (
+      {tab === 'new' && profile?.cifi_verified && (
         <div className="card p-5" style={{ border: '1px solid var(--border-default)' }}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
             <div>

@@ -7,12 +7,13 @@ from api.models.public import (  # noqa: F401
     ChainWatcher, ChainEvent, MessengerLink, DAppBuild,
     AppListing, AppReview, AppInstall,
     AppSubmission, SubmissionNote,
+    SupportTicket, TicketMessage,
 )
 from api.models.internal import (  # noqa: F401
     ServerSecret, RoleAssignment, AdminAuditLog,
     ProductRegistry, MCPServerRegistry, SystemConfig, HealthCheckLog,
     CustodialWallet, WalletShare,
-    ScheduledTask, ScriptExecution, SandboxEnvironment,
+    InfraNode, ScheduledTask, ScriptExecution, SandboxEnvironment,
 )
 from api.models.knowledge import (  # noqa: F401
     KnowledgeDocument, KnowledgeChunk, ContractDefinition, DocumentShare,

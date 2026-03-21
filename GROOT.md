@@ -50,7 +50,11 @@ See the full specification in `docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md`.
 - Script Runner — Safe script execution with category-based access control (ops, maintenance, analysis, chain, dapp)
 - JSONL Logger — File-based episodic audit trail alongside DB storage
 - Configuration — YAML hierarchy (default → production → ENV) with dot-notation access
-- Admin Panel — Role management (master_admin, admin, operator, readonly), secrets vault, audit log, chain management, GROOT wallet, pending actions
+- Help Desk — XMTP-encrypted customer support: tickets linked to messaging conversations, admin queue, FAQ
+- SDK Gateway — Deterministic, LLM-free MCP tools for contract address resolution and public SDK access (4 tools: resolve_contract, fetch_sdk, list_chains_for_contract, bulk_sdk_export)
+- Tab Visibility — Admin-controlled feature gating: 3-layer enforcement (UI hiding, client redirect, API middleware), master_admin bypass
+- Infrastructure Manager — Oracle Cloud instance registry: node CRUD, health checks, resource aggregation, multi-provider support
+- Admin Panel — Role management (master_admin, admin, operator, readonly), secrets vault, audit log, chain management, GROOT wallet, pending actions, tab visibility, infrastructure, 13 admin tabs
 
 **Cardinal Rules:**
 1. User source code is PRIVATE — GROOT never reads `source_code`, only ABIs and SDKs
@@ -61,10 +65,11 @@ See the full specification in `docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md`.
 6. Agents inherit owner permissions — no privilege escalation
 7. Chain watchers may detect events but NEVER initiate state-changing transactions autonomously
 
-**Autonomous Platform Operations (3 Agent Skills Installed):**
+**Autonomous Platform Operations (4 Agent Skills Installed):**
 - `skills/refinet-platform-ops/` — Platform monitoring, health checks, admin email alerts, agent pipeline orchestration
 - `skills/refinet-knowledge-curator/` — RAG/CAG intelligence maintenance: orphan detection, stale chunk pruning, CAG sync, embedding drift detection
 - `skills/refinet-contract-watcher/` — On-chain intelligence: ABI security scanning (8 dangerous patterns), event interpretation, contract activity monitoring, cross-chain bridge correlation
+- `skills/refinet-sdk-gateway/` — Deterministic SDK access: contract resolution, SDK fetch, catalog export, automated sync workers with feedback loops
 - Zero-cost agent pipeline: Claude Code CLI → Ollama → BitNet → Gemini Flash (4-tier fallback, all free)
 - File-based agent memory: `memory/{working,episodic,semantic,procedural}/` for persistent agent state across runs
 - 15 cron-driven autonomous tasks across 3 agents (platform-ops, knowledge-curator, contract-watcher)
@@ -72,13 +77,13 @@ See the full specification in `docs/REFINET_CLOUD_TECHNICAL_SPECIFICATION.md`.
 - GitHub Actions workflows for all 3 agents (zero-cost CI/CD scheduling)
 
 **Scale:**
-- 29 route files, 302+ API endpoints
-- 71+ database tables (public + internal)
-- 70+ service modules, 12 auth modules
-- 16 migration files, 6 middleware modules
-- 10 test files, 40+ operational scripts
-- 24 frontend pages, 20+ components, 17 documentation files
+- 30 route files, 330+ API endpoints, 22 MCP tools
+- 75+ database tables (public + internal)
+- 70+ service modules, 12 auth modules, 7 middleware modules
+- 23 migration files (20 public + 3 internal)
+- 12 test files, 214 passing tests, 40+ operational scripts
+- 25 frontend pages, 20+ components, 13 admin panel tabs
 - 5 root control documents (SOUL, SAFETY, MEMORY, HEARTBEAT, AGENTS)
-- 7 skills (platform-ops, knowledge-curator, contract-watcher + 4 base), 4 YAML config files, JSONL audit logging
+- 8 skills (platform-ops, knowledge-curator, contract-watcher, sdk-gateway + 4 base), 4 YAML config files, JSONL audit logging
 - 4 persistent memory directories for autonomous agent state
 - 3 GitHub Actions workflows for autonomous agent scheduling

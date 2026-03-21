@@ -124,7 +124,6 @@ export default function WalletOnboarding({ chainId, chainName, onComplete, onCan
 
   const finish = () => {
     onComplete(accessToken)
-    window.location.href = '/dashboard/'
   }
 
   // Escape key to go back on intro, or do nothing on other steps

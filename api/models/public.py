@@ -46,6 +46,13 @@ class User(PublicBase):
     marketing_consent = Column(Boolean, default=False)
     marketing_consent_at = Column(DateTime, nullable=True)
 
+    # CIFI Federation
+    cifi_verified = Column(Boolean, default=False)
+    cifi_username = Column(String, unique=True, nullable=True, index=True)
+    cifi_verified_at = Column(DateTime, nullable=True)
+    cifi_kyc_level = Column(String, nullable=True)
+    cifi_display_name = Column(String, nullable=True)
+
 
 class ApiKey(PublicBase):
     __tablename__ = "api_keys"
@@ -539,4 +546,43 @@ class SubmissionNote(PublicBase):
     author_id = Column(String, ForeignKey("users.id"), nullable=False)
     note_type = Column(String, nullable=False)                       # comment | request_changes | approval | rejection | system
     content = Column(Text, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+# ── Support / Help Desk ─────────────────────────────────────────────
+
+class SupportTicket(PublicBase):
+    """
+    Customer support ticket linked to an encrypted messaging conversation.
+    Lifecycle: open → in_progress → waiting_on_user → resolved → closed
+    """
+    __tablename__ = "support_tickets"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    conversation_id = Column(String, ForeignKey("conversations.id"), nullable=True)
+    ticket_number = Column(Integer, nullable=True, unique=True)      # human-readable #001
+    subject = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    category = Column(String, nullable=False, default="general")     # general | bug | billing | security | feature | account
+    priority = Column(String, nullable=False, default="normal")      # low | normal | high | urgent
+    status = Column(String, nullable=False, default="open", index=True)  # open | in_progress | waiting_on_user | resolved | closed
+    assigned_to = Column(String, ForeignKey("users.id"), nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    is_encrypted = Column(Boolean, default=False)
+    extra_data = Column(Text, nullable=True)                         # JSON: browser info, page context
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now())
+
+
+class TicketMessage(PublicBase):
+    """Messages within a support ticket thread."""
+    __tablename__ = "ticket_messages"
+
+    id = Column(String, primary_key=True, default=new_uuid)
+    ticket_id = Column(String, ForeignKey("support_tickets.id", ondelete="CASCADE"), nullable=False, index=True)
+    author_id = Column(String, ForeignKey("users.id"), nullable=False)
+    message_type = Column(String, nullable=False, default="reply")   # reply | note | system | resolution
+    content = Column(Text, nullable=False)
+    is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, server_default=func.now())

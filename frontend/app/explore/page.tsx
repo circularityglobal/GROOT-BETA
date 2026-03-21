@@ -280,7 +280,6 @@ export default function ExplorePage() {
 
   useEffect(() => {
     const token = localStorage.getItem('refinet_token')
-    if (!token) { window.location.href = '/settings/'; return }
 
     fetch(`${API_URL}/registry/projects/trending?limit=6`)
       .then(r => r.ok ? r.json() : [])

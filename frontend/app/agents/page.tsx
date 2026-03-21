@@ -77,14 +77,14 @@ export default function AgentsPage() {
 
   const fetchSoul = useCallback((agentId: string) => {
     fetch(`${API_URL}/agents/${agentId}/soul`, { headers: headers() })
-      .then(r => r.ok ? r.json() : {})
-      .then(data => setSoulText(data.soul_md || data.soul || ''))
+      .then(r => r.ok ? r.json() : {} as Record<string, string>)
+      .then((data: Record<string, string>) => setSoulText(data.soul_md || data.soul || ''))
       .catch(() => setSoulText(''))
   }, [headers])
 
   useEffect(() => {
     const token = localStorage.getItem('refinet_token')
-    if (!token) { window.location.href = '/settings/'; return }
+    
     fetchAgents()
   }, [fetchAgents])
 

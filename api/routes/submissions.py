@@ -1,6 +1,10 @@
 """
 REFINET Cloud — App Submission Routes
 Developer-facing routes for submitting apps for review.
+
+CIFI Federation gate: All submission actions (create, upload, submit)
+require a verified CIFI identity (@username). This ensures every app
+in the store is linked to a KYC-verifiable identity.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
@@ -36,6 +40,28 @@ def _get_user_id(request: Request, db: Session) -> str:
     return payload["sub"]
 
 
+def _require_cifi_verified(db: Session, user_id: str) -> None:
+    """
+    Enforce CIFI federation identity for app store submissions.
+    Users must have a verified @username from CIFI.GLOBAL to submit,
+    upload artifacts, or request review for apps in the store.
+    """
+    from api.models.public import User
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    if not getattr(user, "cifi_verified", False) or not getattr(user, "cifi_username", None):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "CIFI identity verification required. "
+                "You must have a verified @username from CIFI.GLOBAL to submit apps to the store. "
+                "Go to Settings or the Onboarding Wizard to verify your identity."
+            ),
+        )
+
+
 # ── Create Submission ─────────────────────────────────────────────
 
 @router.post("")
@@ -44,8 +70,9 @@ def create_submission_route(
     request: Request,
     db: Session = Depends(public_db_dependency),
 ):
-    """Create a new submission for App Store review."""
+    """Create a new submission for App Store review. Requires CIFI identity."""
     user_id = _get_user_id(request, db)
+    _require_cifi_verified(db, user_id)
 
     name = body.get("name")
     category = body.get("category")
@@ -86,8 +113,9 @@ async def upload_artifact_route(
     file: UploadFile = File(...),
     db: Session = Depends(public_db_dependency),
 ):
-    """Upload a ZIP artifact for a submission."""
+    """Upload a ZIP artifact for a submission. Requires CIFI identity."""
     user_id = _get_user_id(request, db)
+    _require_cifi_verified(db, user_id)
 
     data = await file.read()
     result = upload_artifact(
@@ -111,8 +139,9 @@ def submit_for_review_route(
     request: Request,
     db: Session = Depends(public_db_dependency),
 ):
-    """Submit a draft for review. Triggers automated scan."""
+    """Submit a draft for review. Triggers automated scan. Requires CIFI identity."""
     user_id = _get_user_id(request, db)
+    _require_cifi_verified(db, user_id)
 
     result = submit_for_review(db, submission_id, user_id)
     if "error" in result:

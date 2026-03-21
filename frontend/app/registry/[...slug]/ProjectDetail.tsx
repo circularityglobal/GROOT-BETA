@@ -1,12 +1,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { API_URL } from '@/lib/config'
 
 const TABS = ['README', 'ABIs', 'SDKs', 'Execution Logic', 'Settings']
 
 export default function ProjectDetailPage({ params }: { params: { slug: string[] } }) {
+  const router = useRouter()
   const slug = params.slug?.join('/') || ''
   const [project, setProject] = useState<any>(null)
   const [abis, setAbis] = useState<any[]>([])
@@ -19,7 +21,6 @@ export default function ProjectDetailPage({ params }: { params: { slug: string[]
 
   useEffect(() => {
     const token = localStorage.getItem('refinet_token')
-    if (!token) { window.location.href = '/settings/'; return }
     if (!slug) return
 
     const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
@@ -60,7 +61,7 @@ export default function ProjectDetailPage({ params }: { params: { slug: string[]
     })
     if (resp.ok) {
       const data = await resp.json()
-      window.location.href = `/registry/${data.slug}/`
+      router.push(`/registry/${data.slug}/`)
     }
   }
 

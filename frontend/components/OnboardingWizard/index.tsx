@@ -7,11 +7,12 @@ interface OnboardingWizardProps {
   onComplete: () => void
 }
 
-type Step = 'welcome' | 'profile' | 'security' | 'apikey' | 'done'
+type Step = 'welcome' | 'profile' | 'cifi' | 'security' | 'apikey' | 'done'
 
 const STEPS: { id: Step; label: string }[] = [
   { id: 'welcome', label: 'Welcome' },
   { id: 'profile', label: 'Profile' },
+  { id: 'cifi', label: 'Identity' },
   { id: 'security', label: 'Security' },
   { id: 'apikey', label: 'API Key' },
   { id: 'done', label: 'Done' },
@@ -40,6 +41,15 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
   const [newApiKey, setNewApiKey] = useState('')
   const [keyCopied, setKeyCopied] = useState(false)
 
+  // CIFI Federation
+  const [cifiChecking, setCifiChecking] = useState(false)
+  const [cifiVerified, setCifiVerified] = useState(false)
+  const [cifiUsername, setCifiUsername] = useState('')
+  const [cifiKycLevel, setCifiKycLevel] = useState('')
+  const [cifiRegistering, setCifiRegistering] = useState(false)
+  const [cifiRegUsername, setCifiRegUsername] = useState('')
+  const [cifiNotFound, setCifiNotFound] = useState(false)
+
   // Status
   const [error, setError] = useState('')
   const [msg, setMsg] = useState('')
@@ -64,11 +74,39 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
           setEmail(prof.email || '')
           setPasswordSet(!!prof.password_enabled)
           setTotpEnabled(!!prof.totp_enabled)
+          if (prof.cifi_verified) {
+            setCifiVerified(true)
+            setCifiUsername(prof.cifi_username || '')
+            setCifiKycLevel(prof.cifi_kyc_level || '')
+          }
         }
         setLoading(false)
       })
       .catch(() => setLoading(false))
   }, [])
+
+  // Auto-check CIFI identity when the step becomes active
+  useEffect(() => {
+    if (step !== 'cifi' || cifiVerified || cifiChecking || cifiNotFound || cifiRegistering) return
+    let cancelled = false
+    setCifiChecking(true)
+    setError('')
+    fetch(`${API_URL}/auth/cifi/verify`, { method: 'POST', headers: authHeaders() })
+      .then(r => r.json().then(data => ({ ok: r.ok, data })))
+      .then(({ ok, data }) => {
+        if (cancelled) return
+        if (ok && data.verified) {
+          setCifiVerified(true)
+          setCifiUsername(data.cifi_username || '')
+          setCifiKycLevel(data.cifi_kyc_level || '')
+        } else {
+          setCifiNotFound(true)
+        }
+        setCifiChecking(false)
+      })
+      .catch(() => { if (!cancelled) { setCifiNotFound(true); setCifiChecking(false) } })
+    return () => { cancelled = true }
+  }, [step]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const reloadProfile = useCallback(() => {
     const t = getToken()
@@ -96,7 +134,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       if (!resp.ok) { const d = await resp.json().catch(() => ({})); setError(d.detail || 'Failed to update profile'); setSaving(false); return }
       setMsg('Profile updated')
       reloadProfile()
-      setTimeout(() => { setMsg(''); setStep('security') }, 800)
+      setTimeout(() => { setMsg(''); setStep('cifi') }, 800)
     } catch (e: any) { setError(e.message) }
     setSaving(false)
   }
@@ -201,6 +239,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
             <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.02em' }}>
               {step === 'welcome' ? 'Welcome to REFINET Cloud' :
                step === 'profile' ? 'Set Up Your Profile' :
+               step === 'cifi' ? 'Verify Your Identity' :
                step === 'security' ? 'Secure Your Account' :
                step === 'apikey' ? 'Get Your API Key' :
                'You\'re All Set'}
@@ -241,7 +280,8 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {[
-                  { icon: '\uD83D\uDC64', title: 'Profile', desc: 'Set your username and email', time: '30 sec' },
+                  { icon: '\uD83D\uDC64', title: 'Profile', desc: 'Set your email and preferences', time: '30 sec' },
+                  { icon: '\uD83D\uDEE1\uFE0F', title: 'Identity', desc: 'Optional: verify via CIFI.GLOBAL', time: '30 sec' },
                   { icon: '\uD83D\uDD12', title: 'Security', desc: 'Password + Two-Factor Authentication', time: '90 sec' },
                   { icon: '\uD83D\uDD11', title: 'API Key', desc: 'Generate your first inference key', time: '30 sec' },
                 ].map(item => (
@@ -277,15 +317,17 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Username</label>
-                  <input className="input-base focus-glow" style={{ width: '100%', fontSize: 14 }} value={username} onChange={e => setUsername(e.target.value)} placeholder="Choose a username" />
-                  <p style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 4 }}>Visible on your public profile and registry projects</p>
-                </div>
-                <div>
                   <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Email</label>
                   <input className="input-base focus-glow" type="email" style={{ width: '100%', fontSize: 14 }} value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" />
                   <p style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 4 }}>Required for password recovery and admin alerts</p>
                 </div>
+              </div>
+
+              <div style={{ marginTop: 8, padding: '10px 14px', borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)' }}>
+                <p style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                  Your @username will be available after verifying your identity through CIFI.GLOBAL in the next step.
+                  Until then, your truncated wallet address will be displayed.
+                </p>
               </div>
 
               {/* Marketing consent */}
@@ -319,6 +361,127 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                 <button onClick={() => setStep('welcome')} className="btn-secondary" style={{ padding: '10px 20px' }}>Back</button>
                 <button onClick={handleSaveProfile} className="btn-primary" disabled={saving} style={{ flex: 1, padding: '10px 0' }}>
                   {saving ? 'Saving...' : 'Continue'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── CIFI Identity ── */}
+          {step === 'cifi' && (
+            <div className="animate-fade-in">
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.6 }}>
+                Connect your <strong style={{ color: 'var(--refi-teal)' }}>CIFI.GLOBAL</strong> identity for a verified @username and KYC status.
+                This is optional &mdash; you can always do this later in Settings.
+              </p>
+
+              {cifiVerified ? (
+                <div style={{ padding: 16, borderRadius: 10, background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.2)', marginBottom: 16 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                    <span style={{ fontSize: 20 }}>{'\u2705'}</span>
+                    <div>
+                      <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--success)' }}>@{cifiUsername}</p>
+                      <p style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>CIFI Identity Verified{cifiKycLevel ? ` \u2022 KYC: ${cifiKycLevel}` : ''}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : cifiChecking ? (
+                <div style={{ padding: 20, borderRadius: 10, background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)', textAlign: 'center', marginBottom: 16 }}>
+                  <div className="animate-pulse" style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>Checking CIFI identity...</div>
+                </div>
+              ) : cifiNotFound && !cifiRegistering ? (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ padding: '12px 14px', borderRadius: 8, background: 'rgba(250,204,21,0.08)', border: '1px solid rgba(250,204,21,0.2)', marginBottom: 14 }}>
+                    <p style={{ fontSize: 12, color: 'rgb(250,204,21)' }}>
+                      No CIFI identity found for this wallet.
+                    </p>
+                  </div>
+                  <button onClick={() => setCifiRegistering(true)} className="btn-secondary" style={{ width: '100%', padding: '10px 0', fontSize: 13, marginBottom: 8 }}>
+                    Register on CIFI
+                  </button>
+                </div>
+              ) : cifiRegistering ? (
+                <div style={{ padding: 16, borderRadius: 10, background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)', marginBottom: 16 }}>
+                  <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>Register CIFI Identity</h3>
+                  <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 12 }}>Choose your @username (5-15 chars, lowercase, letters/numbers/underscore/hyphen)</p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <input className="input-base focus-glow" style={{ width: '100%', fontSize: 14 }}
+                      value={cifiRegUsername}
+                      onChange={e => setCifiRegUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+                      placeholder="your_username"
+                      maxLength={15}
+                    />
+                    {cifiRegUsername && (cifiRegUsername.length < 5 || cifiRegUsername.length > 15) && (
+                      <p style={{ fontSize: 10, color: 'var(--error)' }}>Username must be 5-15 characters</p>
+                    )}
+                    <button
+                      onClick={async () => {
+                        setSaving(true); setError('')
+                        try {
+                          const resp = await fetch(`${API_URL}/auth/cifi/register`, {
+                            method: 'POST', headers: authHeaders(),
+                            body: JSON.stringify({ username: cifiRegUsername }),
+                          })
+                          const data = await resp.json()
+                          if (!resp.ok) { setError(data.detail || 'Registration failed'); setSaving(false); return }
+                          if (data.verified) {
+                            setCifiVerified(true)
+                            setCifiUsername(data.cifi_username || cifiRegUsername)
+                            setCifiKycLevel(data.cifi_kyc_level || '')
+                            setCifiRegistering(false)
+                            setMsg('CIFI identity registered!')
+                            reloadProfile()
+                            setTimeout(() => setMsg(''), 2000)
+                          }
+                        } catch (e: any) { setError(e.message) }
+                        setSaving(false)
+                      }}
+                      className="btn-primary"
+                      disabled={saving || cifiRegUsername.length < 5 || cifiRegUsername.length > 15}
+                      style={{ fontSize: 12, padding: '8px 16px' }}
+                    >
+                      {saving ? 'Registering...' : 'Register'}
+                    </button>
+                    <button onClick={() => setCifiRegistering(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--text-tertiary)', padding: 4 }}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ marginBottom: 16 }}>
+                  <button
+                    onClick={async () => {
+                      setCifiChecking(true); setError('')
+                      try {
+                        const resp = await fetch(`${API_URL}/auth/cifi/verify`, {
+                          method: 'POST', headers: authHeaders(),
+                        })
+                        const data = await resp.json()
+                        if (resp.ok && data.verified) {
+                          setCifiVerified(true)
+                          setCifiUsername(data.cifi_username || '')
+                          setCifiKycLevel(data.cifi_kyc_level || '')
+                          setMsg('CIFI identity verified!')
+                          reloadProfile()
+                          setTimeout(() => setMsg(''), 2000)
+                        } else {
+                          setCifiNotFound(true)
+                        }
+                      } catch (e: any) {
+                        setCifiNotFound(true)
+                      }
+                      setCifiChecking(false)
+                    }}
+                    className="btn-primary" style={{ width: '100%', padding: '12px 0', fontSize: 13, opacity: 0.7 }}
+                  >
+                    Check CIFI Identity
+                  </button>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button onClick={() => setStep('profile')} className="btn-secondary" style={{ padding: '10px 20px' }}>Back</button>
+                <button onClick={() => { setError(''); setStep('security') }} className="btn-primary" style={{ flex: 1, padding: '10px 0' }}>
+                  {cifiVerified ? 'Continue' : 'Skip for now'}
                 </button>
               </div>
             </div>
@@ -405,7 +568,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               )}
 
               <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
-                <button onClick={() => setStep('profile')} className="btn-secondary" style={{ padding: '10px 20px' }}>Back</button>
+                <button onClick={() => setStep('cifi')} className="btn-secondary" style={{ padding: '10px 20px' }}>Back</button>
                 <button onClick={() => { setError(''); setStep('apikey') }} className="btn-primary" style={{ flex: 1, padding: '10px 0' }}>
                   {allSecurityDone ? 'Continue' : 'Skip for now'}
                 </button>
@@ -500,7 +663,8 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 24, textAlign: 'left' }}>
-                <CompletionRow label="Profile" done={!!(username || profile?.username)} detail={username || profile?.username || 'Not set'} />
+                <CompletionRow label="Identity" done={cifiVerified} detail={cifiVerified ? `@${cifiUsername}` : 'Pseudonymous (wallet only)'} />
+                <CompletionRow label="Email" done={!!(email || profile?.email)} detail={email || profile?.email || 'Not set'} />
                 <CompletionRow label="Password" done={passwordSet} detail={passwordSet ? 'Enabled' : 'Not set'} />
                 <CompletionRow label="2FA" done={totpEnabled} detail={totpEnabled ? 'Enabled' : 'Not set'} />
                 <CompletionRow label="API Key" done={!!newApiKey} detail={newApiKey ? `${newApiKey.slice(0, 12)}...` : 'Not created'} />

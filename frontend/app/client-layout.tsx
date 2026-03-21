@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ThemeProvider, useTheme } from '@/components/ThemeProvider'
 import ErrorBoundary from '@/components/ErrorBoundary'
@@ -31,7 +31,10 @@ const queryClient = new QueryClient({
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [hydrated, setHydrated] = useState(false)
+  const [transitioning, setTransitioning] = useState(false)
+  const prevLoggedIn = useRef(false)
   const pathname = usePathname()
+  const router = useRouter()
   const mountedRef = useRef(false)
 
   useEffect(() => {
@@ -98,16 +101,38 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     }
   }, [])
 
-  // Auth page (/settings/) gets full viewport — no nav, no padding
-  const isAuthPage = pathname === '/settings' || pathname === '/settings/'
+  // Detect auth state transitions — show cover during login/logout switch
+  useEffect(() => {
+    if (hydrated && prevLoggedIn.current !== isLoggedIn) {
+      // Auth state changed — cover the screen during component tree swap
+      setTransitioning(true)
+      const timer = setTimeout(() => setTransitioning(false), 600)
+      prevLoggedIn.current = isLoggedIn
+      return () => clearTimeout(timer)
+    }
+    prevLoggedIn.current = isLoggedIn
+  }, [isLoggedIn, hydrated])
+
+  // Routes that don't require authentication
+  const PUBLIC_ROUTES = ['/', '/login', '/settings', '/chat', '/docs', '/store', '/explore', '/registry', '/u', '/network']
+  const isLoginPage = pathname === '/login' || pathname === '/login/' || pathname === '/settings' || pathname === '/settings/'
+  const isPublicRoute = PUBLIC_ROUTES.some(r =>
+    r === '/' ? pathname === '/' : (pathname === r || pathname === r + '/' || pathname.startsWith(r + '/'))
+  )
+
+  // Centralized auth guard: redirect unauthenticated users to home page
+  useEffect(() => {
+    if (hydrated && !isLoggedIn && !isPublicRoute) {
+      router.replace('/')
+    }
+  }, [hydrated, isLoggedIn, isPublicRoute, pathname, router])
 
   // Don't render anything until hydrated — prevents SSR/CSR mismatch flash
-  // that can cause layout thrash and component unmount/remount cycles
   if (!hydrated) {
     return (
       <div style={{
         minHeight: '100vh',
-        background: 'var(--bg-primary, #0a0a0f)',
+        background: '#050505',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -115,7 +140,27 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         <img
           src="/refi-logo.png"
           alt="Loading..."
-          style={{ width: 32, height: 32, borderRadius: '50%', opacity: 0.6, animation: 'pulse 1.5s ease-in-out infinite' }}
+          style={{ width: 32, height: 32, opacity: 0.6, animation: 'pulse 1.5s ease-in-out infinite' }}
+          onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+        />
+      </div>
+    )
+  }
+
+  // If not logged in and on a protected route, show loading while redirect happens
+  if (!isLoggedIn && !isPublicRoute) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: '#050505',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}>
+        <img
+          src="/refi-logo.png"
+          alt="Redirecting..."
+          style={{ width: 32, height: 32, opacity: 0.6, animation: 'pulse 1.5s ease-in-out infinite' }}
           onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
         />
       </div>
@@ -123,40 +168,109 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   }
 
   return (
-    <ErrorBoundary>
-      <WagmiProvider config={wagmiConfig}>
-        <QueryClientProvider client={queryClient}>
-          <ThemeProvider>
-            {isLoggedIn ? (
-              <AppShell>{children}</AppShell>
-            ) : isAuthPage ? (
-              <>{children}</>
-            ) : (
-              <>
-                <PublicNavBar hydrated={hydrated} />
-                <main className="pt-[48px]">{children}</main>
-              </>
-            )}
-          </ThemeProvider>
-        </QueryClientProvider>
-      </WagmiProvider>
-    </ErrorBoundary>
+    <>
+      {/* Global transition cover — hides component tree swap during login/logout */}
+      {transitioning && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 99999,
+          background: '#050505',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 16,
+        }}>
+          <img
+            src="/refi-logo.png"
+            alt="REFINET"
+            style={{ width: 40, height: 40, animation: 'pulse 1.5s ease-in-out infinite' }}
+            onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+          />
+          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: '#6B6B6B' }}>
+            {isLoggedIn ? 'Loading dashboard...' : 'Signing out...'}
+          </span>
+        </div>
+      )}
+      <ErrorBoundary>
+        <ThemeProvider>
+          {isLoggedIn ? (
+            <WagmiProvider config={wagmiConfig}>
+              <QueryClientProvider client={queryClient}>
+                <AppShell>{children}</AppShell>
+              </QueryClientProvider>
+            </WagmiProvider>
+          ) : (
+            <ForceDarkTheme>
+              {isLoginPage ? (
+                <>{children}</>
+              ) : (
+                <>
+                  <PublicNavBar hydrated={hydrated} />
+                  <main className="pt-[48px]">{children}</main>
+                </>
+              )}
+            </ForceDarkTheme>
+          )}
+        </ThemeProvider>
+      </ErrorBoundary>
+    </>
   )
+}
+
+/* ─── Force dark theme on public / landing pages ─── */
+function ForceDarkTheme({ children }: { children: React.ReactNode }) {
+  // Force dark synchronously before paint — no white flash possible
+  if (typeof document !== 'undefined') {
+    document.documentElement.setAttribute('data-theme', 'dark')
+  }
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', 'dark')
+    // Cleanup: keep dark during transition to dashboard
+    return () => {
+      document.documentElement.setAttribute('data-theme', 'dark')
+    }
+  })
+
+  return <>{children}</>
 }
 
 /* ─── Authenticated App Shell ─── */
 function AppShell({ children }: { children: React.ReactNode }) {
   const { theme, toggle } = useTheme()
   const pathname = usePathname()
+  const router = useRouter()
   const [collapsed, setCollapsed] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [docsOpen, setDocsOpen] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
+  const [tabVisibility, setTabVisibility] = useState<Record<string, boolean>>({})
+  const [isMasterAdmin, setIsMasterAdmin] = useState(false)
 
   useEffect(() => {
     const saved = localStorage.getItem('refinet_sidebar_collapsed')
     if (saved === 'true') setCollapsed(true)
+  }, [])
+
+  // Fetch tab visibility (public endpoint)
+  useEffect(() => {
+    fetch(`${API_URL}/admin/tab-visibility`)
+      .then(r => r.ok ? r.json() : { tabs: {} })
+      .then(d => setTabVisibility(d.tabs || {}))
+      .catch(() => {})
+  }, [])
+
+  // Check if current user is master_admin
+  useEffect(() => {
+    const t = localStorage.getItem('refinet_token')
+    if (!t) return
+    fetch(`${API_URL}/auth/me`, { headers: { Authorization: `Bearer ${t}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(p => { if (p?.role === 'master_admin') setIsMasterAdmin(true) })
+      .catch(() => {})
   }, [])
 
   // Show onboarding wizard for new users who haven't completed it
@@ -187,6 +301,32 @@ function AppShell({ children }: { children: React.ReactNode }) {
     return pathname.startsWith(clean)
   }
 
+  // Tab visibility: master admin sees everything, others only enabled tabs
+  const isTabVisible = (tabKey: string) => {
+    if (isMasterAdmin) return true
+    return tabVisibility[tabKey] !== false
+  }
+
+  // Client-side route guard for disabled tabs
+  const TAB_PATH_MAP: Record<string, string> = {
+    '/chat': 'chat', '/agents': 'agents', '/knowledge': 'knowledge',
+    '/devices': 'devices', '/messages': 'messages', '/network': 'network',
+    '/pipeline': 'pipeline', '/deployments': 'deployments', '/dapp': 'dapp',
+    '/projects': 'projects', '/explore': 'explore', '/store': 'store',
+    '/repo': 'repo', '/webhooks': 'webhooks', '/payments': 'payments',
+    '/help': 'help', '/registry': 'explore',
+  }
+
+  useEffect(() => {
+    if (isMasterAdmin) return
+    for (const [path, tab] of Object.entries(TAB_PATH_MAP)) {
+      if (pathname.startsWith(path) && tabVisibility[tab] === false) {
+        router.replace('/dashboard')
+        return
+      }
+    }
+  }, [pathname, tabVisibility, isMasterAdmin, router])
+
   const handleLogout = async () => {
     // Revoke refresh tokens server-side before clearing local storage
     const token = localStorage.getItem('refinet_token')
@@ -201,7 +341,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('refinet_token')
     localStorage.removeItem('refinet_refresh')
     window.dispatchEvent(new Event('refinet-auth-change'))
-    window.location.href = '/'
+    router.push('/')
   }
 
   const sidebarWidth = collapsed ? 64 : 240
@@ -237,7 +377,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
           </button>
 
           <Link href="/dashboard/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
-            <img src="/refi-logo.png" alt="REFINET" style={{ width: 24, height: 24, borderRadius: '50%' }} />
+            <img src="/refi-logo.png" alt="REFINET" style={{ width: 24, height: 24 }} />
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '0.02em' }}>
               REFINET<span style={{ color: 'var(--refi-teal)' }}> Cloud</span>
             </span>
@@ -246,35 +386,35 @@ function AppShell({ children }: { children: React.ReactNode }) {
 
         {/* Right icons */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <TopBarIcon href="/explore/" label="Registry" active={isActive('/explore')}>
+          {isTabVisible('explore') && <TopBarIcon href="/explore/" label="Registry" active={isActive('/explore')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
-          </TopBarIcon>
+          </TopBarIcon>}
 
-          <TopBarIcon href="/repo/" label="Repositories" active={isActive('/repo')}>
+          {isTabVisible('repo') && <TopBarIcon href="/repo/" label="Repositories" active={isActive('/repo')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
             </svg>
-          </TopBarIcon>
+          </TopBarIcon>}
 
-          <TopBarIcon href="/store/" label="App Store" active={isActive('/store')}>
+          {isTabVisible('store') && <TopBarIcon href="/store/" label="App Store" active={isActive('/store')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M6 2L3 7v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7l-3-5z"/><line x1="3" y1="7" x2="21" y2="7"/><path d="M16 11a4 4 0 0 1-8 0"/>
             </svg>
-          </TopBarIcon>
+          </TopBarIcon>}
 
-          <TopBarIcon href="/messages/" label="Messages" active={isActive('/messages')}>
+          {isTabVisible('messages') && <TopBarIcon href="/messages/" label="Messages" active={isActive('/messages')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
             </svg>
-          </TopBarIcon>
+          </TopBarIcon>}
 
-          <TopBarIcon href="/network/" label="Network" active={isActive('/network')}>
+          {isTabVisible('network') && <TopBarIcon href="/network/" label="Network" active={isActive('/network')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
             </svg>
-          </TopBarIcon>
+          </TopBarIcon>}
 
           <div style={{ width: 1, height: 20, background: 'var(--border-subtle)', margin: '0 4px' }} />
 
@@ -392,12 +532,12 @@ function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             )}
 
-            <SidebarItem href="/chat/" icon={<ChatIcon />} label="Chat" active={isActive('/chat')} collapsed={collapsed} />
-            <SidebarItem href="/agents/" icon={<AgentsIcon />} label="Agents" active={isActive('/agents')} collapsed={collapsed} />
-            <SidebarItem href="/knowledge/" icon={<KnowledgeIcon />} label="Knowledge" active={isActive('/knowledge')} collapsed={collapsed} />
-            <SidebarItem href="/devices/" icon={<DevicesIcon />} label="Devices" active={isActive('/devices')} collapsed={collapsed} />
-            <SidebarItem href="/messages/" icon={<ChatIcon />} label="Messages" active={isActive('/messages')} collapsed={collapsed} />
-            <SidebarItem href="/network/" icon={<WebhooksIcon />} label="Network" active={isActive('/network')} collapsed={collapsed} />
+            {isTabVisible('chat') && <SidebarItem href="/chat/" icon={<ChatIcon />} label="Chat" active={isActive('/chat')} collapsed={collapsed} />}
+            {isTabVisible('agents') && <SidebarItem href="/agents/" icon={<AgentsIcon />} label="Agents" active={isActive('/agents')} collapsed={collapsed} />}
+            {isTabVisible('knowledge') && <SidebarItem href="/knowledge/" icon={<KnowledgeIcon />} label="Knowledge" active={isActive('/knowledge')} collapsed={collapsed} />}
+            {isTabVisible('devices') && <SidebarItem href="/devices/" icon={<DevicesIcon />} label="Devices" active={isActive('/devices')} collapsed={collapsed} />}
+            {isTabVisible('messages') && <SidebarItem href="/messages/" icon={<ChatIcon />} label="Messages" active={isActive('/messages')} collapsed={collapsed} />}
+            {isTabVisible('network') && <SidebarItem href="/network/" icon={<WebhooksIcon />} label="Network" active={isActive('/network')} collapsed={collapsed} />}
 
             <div style={{ height: 4 }} />
             {!collapsed && (
@@ -406,15 +546,16 @@ function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             )}
 
-            <SidebarItem href="/pipeline/" icon={<ProjectsIcon />} label="Wizard" active={isActive('/pipeline')} collapsed={collapsed} />
-            <SidebarItem href="/deployments/" icon={<RegistryIcon />} label="Deployments" active={isActive('/deployments')} collapsed={collapsed} />
-            <SidebarItem href="/dapp/" icon={<StoreIcon />} label="DApp Factory" active={isActive('/dapp')} collapsed={collapsed} />
-            <SidebarItem href="/projects/" icon={<ProjectsIcon />} label="Projects" active={isActive('/projects')} collapsed={collapsed} />
-            <SidebarItem href="/explore/" icon={<RegistryIcon />} label="Registry" active={isActive('/explore')} collapsed={collapsed} />
-            <SidebarItem href="/store/" icon={<StoreIcon />} label="App Store" active={isActive('/store')} collapsed={collapsed} />
-            <SidebarItem href="/repo/" icon={<RepoIcon />} label="Repositories" active={isActive('/repo')} collapsed={collapsed} />
-            <SidebarItem href="/webhooks/" icon={<WebhooksIcon />} label="Webhooks" active={isActive('/webhooks')} collapsed={collapsed} />
-            <SidebarItem href="/payments/" icon={<DashboardIcon />} label="Payments" active={isActive('/payments')} collapsed={collapsed} />
+            {isTabVisible('pipeline') && <SidebarItem href="/pipeline/" icon={<ProjectsIcon />} label="Wizard" active={isActive('/pipeline')} collapsed={collapsed} />}
+            {isTabVisible('deployments') && <SidebarItem href="/deployments/" icon={<RegistryIcon />} label="Deployments" active={isActive('/deployments')} collapsed={collapsed} />}
+            {isTabVisible('dapp') && <SidebarItem href="/dapp/" icon={<StoreIcon />} label="DApp Factory" active={isActive('/dapp')} collapsed={collapsed} />}
+            {isTabVisible('projects') && <SidebarItem href="/projects/" icon={<ProjectsIcon />} label="Projects" active={isActive('/projects')} collapsed={collapsed} />}
+            {isTabVisible('explore') && <SidebarItem href="/explore/" icon={<RegistryIcon />} label="Registry" active={isActive('/explore')} collapsed={collapsed} />}
+            {isTabVisible('store') && <SidebarItem href="/store/" icon={<StoreIcon />} label="App Store" active={isActive('/store')} collapsed={collapsed} />}
+            {isTabVisible('repo') && <SidebarItem href="/repo/" icon={<RepoIcon />} label="Repositories" active={isActive('/repo')} collapsed={collapsed} />}
+            {isTabVisible('webhooks') && <SidebarItem href="/webhooks/" icon={<WebhooksIcon />} label="Webhooks" active={isActive('/webhooks')} collapsed={collapsed} />}
+            {isTabVisible('payments') && <SidebarItem href="/payments/" icon={<DashboardIcon />} label="Payments" active={isActive('/payments')} collapsed={collapsed} />}
+            {isTabVisible('help') && <SidebarItem href="/help/" icon={<HelpDeskIcon />} label="Help Desk" active={isActive('/help')} collapsed={collapsed} />}
             <SidebarButton icon={<DocsIcon />} label="API Docs" active={docsOpen} collapsed={collapsed} onClick={() => setDocsOpen(true)} />
           </nav>
 
@@ -447,28 +588,19 @@ function AppShell({ children }: { children: React.ReactNode }) {
   )
 }
 
-/* ─── Public (pre-login) NavBar ─── */
+/* ─── Public (pre-login) NavBar — always dark, no theme toggle ─── */
 function PublicNavBar({ hydrated }: { hydrated: boolean }) {
-  const { theme, toggle } = useTheme()
   return (
     <nav className="fixed top-0 left-0 right-0 z-40 glass" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
       <div className="mx-auto max-w-6xl flex items-center justify-between px-5 h-12">
         <Link href="/" className="flex items-center gap-2.5 group" style={{ textDecoration: 'none' }}>
-          <img src="/refi-logo.png" alt="REFINET" className="w-6 h-6 rounded-full group-hover:scale-110 transition-transform" />
+          <img src="/refi-logo.png" alt="REFINET" className="w-6 h-6 group-hover:scale-110 transition-transform" />
           <span className="text-sm font-semibold tracking-wide" style={{ color: 'var(--text-primary)' }}>
             REFINET<span style={{ color: 'var(--refi-teal)' }}> Cloud</span>
           </span>
         </Link>
         <div className="flex items-center gap-2">
-          <button
-            onClick={toggle}
-            className="w-8 h-8 rounded-lg flex items-center justify-center"
-            style={{ color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}
-            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
-          >
-            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-          </button>
-          <Link href="/settings/" className="btn-primary !py-1.5 !px-4 !text-xs !rounded-lg" style={{ textDecoration: 'none' }}>
+          <Link href="/login/" prefetch={true} className="btn-primary !py-1.5 !px-4 !text-xs !rounded-lg" style={{ textDecoration: 'none' }}>
             Get Started
           </Link>
         </div>
@@ -606,3 +738,4 @@ function StoreIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fi
 function DocsIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> }
 function AdminIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> }
 function AgentsIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg> }
+function HelpDeskIcon() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> }

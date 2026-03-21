@@ -51,7 +51,7 @@ export default function DAppPage() {
 
   useEffect(() => {
     const token = localStorage.getItem('refinet_token')
-    if (!token) { window.location.href = '/settings/'; return }
+    
     fetchData()
   }, [fetchData])
 

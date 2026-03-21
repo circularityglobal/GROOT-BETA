@@ -43,7 +43,7 @@ export default function DevicesPage() {
 
   useEffect(() => {
     const token = localStorage.getItem('refinet_token')
-    if (!token) { window.location.href = '/settings/'; return }
+    
     fetchDevices()
   }, [])
 

@@ -102,6 +102,12 @@ class UserProfile(BaseModel):
     last_login_at: Optional[datetime] = None
     marketing_consent: bool = False
     onboarding_completed_at: Optional[datetime] = None
+    # CIFI Federation
+    cifi_verified: bool = False
+    cifi_username: Optional[str] = None
+    cifi_display_name: Optional[str] = None
+    cifi_kyc_level: Optional[str] = None
+    display_name: Optional[str] = None  # cifi_display_name if verified, else None
     identities: list["WalletIdentityResponse"] = []
 
 
@@ -247,6 +253,25 @@ class ChainPeersResponse(BaseModel):
     chain_name: str
     subnet_prefix: str
     peers: list[PeerResponse]
+
+
+# ── CIFI Federation ──────────────────────────────────────────────
+
+class CIFIRegisterRequest(BaseModel):
+    username: str = Field(
+        ..., min_length=5, max_length=15,
+        pattern=r"^[a-z0-9_-]+$",
+        description="CIFI username (5-15 chars, lowercase alphanumeric, underscore, or hyphen)",
+    )
+
+
+class CIFIVerifyResponse(BaseModel):
+    verified: bool
+    registered: bool
+    cifi_username: Optional[str] = None
+    cifi_display_name: Optional[str] = None
+    cifi_kyc_level: Optional[str] = None
+    profile: Optional[UserProfile] = None
 
 
 # ── Custodial Wallet ──────────────────────────────────────────────

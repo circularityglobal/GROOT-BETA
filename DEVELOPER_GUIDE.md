@@ -68,7 +68,7 @@ groot/
 │   ├── config.py                  # Settings (env vars + YAML hierarchy)
 │   ├── database.py                # SQLAlchemy sessions (public.db + internal.db)
 │   ├── auth/                      # Auth modules (SIWE, JWT, API keys, TOTP, enforce)
-│   ├── middleware/                # CORS, rate limiting, request logging, protocol auth
+│   ├── middleware/                # CORS, rate limiting, request logging, protocol auth, tab gate
 │   ├── models/                    # SQLAlchemy ORM (11 model files, 80 tables)
 │   │   ├── public.py              # User-facing tables (users, keys, devices, apps, wallets)
 │   │   ├── internal.py            # Admin/secrets tables (wallets, config, audit)
@@ -79,7 +79,7 @@ groot/
 │   │   ├── pipeline.py            # Pipeline runs, steps, pending actions, deployments
 │   │   ├── payments.py            # Fee schedules, payments, subscriptions, revenue splits
 │   │   └── broker.py              # Broker sessions, fee configs
-│   ├── routes/                    # 29 route files, 321 endpoints
+│   ├── routes/                    # 30 route files, 330+ endpoints
 │   ├── schemas/                   # Pydantic request/response schemas
 │   ├── services/                  # 61+ service modules (business logic)
 │   │   ├── providers/             # Model provider plugins (BitNet, Gemini, Ollama, etc.)
@@ -98,7 +98,9 @@ groot/
 │   │   ├── tag_taxonomy.py        # 11-category tag ontology for contract discovery
 │   │   ├── gateway.py             # Universal model gateway
 │   │   ├── rag.py                 # Retrieval-Augmented Generation
-│   │   ├── mcp_gateway.py         # MCP tool dispatcher
+│   │   ├── sdk_gateway.py          # Deterministic SDK access (4 MCP tools, no LLM)
+│   │   ├── support.py              # Customer support / help desk service
+│   │   ├── mcp_gateway.py         # MCP tool dispatcher (22 tools)
 │   │   ├── scheduler.py           # Cron/interval task scheduler
 │   │   ├── event_bus.py           # In-process pub/sub
 │   │   ├── webhook_delivery.py    # HMAC-signed webhook delivery
@@ -131,6 +133,10 @@ groot/
 │   │   ├── SKILL.md               # 620-line skill (7 parts)
 │   │   ├── scripts/               # contract_scan.py (ABI scanner, 8 dangerous patterns)
 │   │   └── references/            # chain-api.md, registry-api.md
+│   ├── refinet-sdk-gateway/       # Deterministic SDK access for agents (LLM-free)
+│   │   ├── SKILL.md               # 7-part skill (4 MCP tools, 2 workers)
+│   │   ├── scripts/               # sdk_sync_worker.py, sdk_indexer.py
+│   │   └── references/            # sdk-gateway-api.md
 │   ├── answer-question/
 │   ├── analyze-telemetry/
 │   └── summarize-contract/
@@ -149,9 +155,9 @@ groot/
 │   ├── ops/                       # 10 scripts (git ops, deploy, health, DB stats)
 │   └── seed/                      # 4 scripts (contracts, knowledge, docs, fee schedules)
 │
-├── migrations/                    # SQL schema migrations (13 public + 1 internal)
-│   ├── public/                    # 001-013: user-facing schema
-│   └── internal/                  # 001: scheduler + script tables
+├── migrations/                    # SQL schema migrations (20 public + 3 internal)
+│   ├── public/                    # 001-020: user-facing schema (latest: support_tickets)
+│   └── internal/                  # 001-003: scheduler, schema gaps, infra_nodes
 │
 ├── docs/                          # Technical documentation (10 files)
 ├── nginx/                         # Nginx config for production
@@ -227,12 +233,43 @@ GROOT uses the contract registry as its logic repository through three access mo
 CAG context is injected as Layer 3.5 in GROOT's 8-layer system prompt (SOUL → agent → memory → RAG → **CAG** → skills → safety → runtime).
 
 ### 6.2 Roles & Authorization
-- **master_admin** — exclusive control over GROOT's wallet, Tier 2 approvals, chain management
-- **admin** — system administration, user management, app store review
+- **master_admin** — exclusive control over GROOT's wallet, Tier 2 approvals, chain management, tab visibility, infrastructure nodes, and granting master_admin to others. JWT-only (X-Admin-Secret bypass NOT permitted).
+- **admin** — system administration, user management, app store review, support tickets. Can grant `admin`/`operator`/`readonly` roles.
 - **operator** — monitoring and operational tasks
 - **readonly** — view-only access
 
-### 6.3 Dynamic Chain Registry
+### 6.3 Tab Visibility (Feature Gating)
+Master admin controls which platform tabs are visible to users via Admin → VISIBILITY panel. Three enforcement layers:
+1. **UI hiding** — sidebar + top bar icons removed for disabled tabs
+2. **Client redirect** — direct URL access to disabled page → `/dashboard`
+3. **API middleware** — `TabGateMiddleware` returns 403 for all API routes of disabled tabs
+
+```bash
+# Get current visibility (public, no auth)
+GET /admin/tab-visibility
+
+# Update visibility (master_admin only)
+PUT /admin/tab-visibility { "tabs": { "agents": false, "knowledge": false } }
+```
+
+### 6.4 Infrastructure Management
+Admin registers and monitors Oracle Cloud instances (and other providers) via Admin → INFRASTRUCTURE panel:
+```bash
+POST /admin/infrastructure/nodes      # Register node (master_admin)
+GET  /admin/infrastructure/nodes      # List all nodes
+POST /admin/infrastructure/nodes/{id}/health  # Health check
+GET  /admin/infrastructure/stats      # Aggregate CPU/RAM/disk
+```
+
+### 6.5 Help Desk (Customer Support)
+Users create encrypted support tickets via `/help/` or Settings → Help & Support. Tickets are linked to XMTP-encrypted DM conversations:
+```bash
+POST /support/tickets                 # Create ticket (user)
+GET  /support/tickets                 # List my tickets
+GET  /support/admin/stats             # Support metrics (admin)
+```
+
+### 6.6 Dynamic Chain Registry
 Chains are stored in the `supported_chains` database table. Admin can add any EVM chain via:
 ```bash
 # API: import from chainlist.org
@@ -242,7 +279,7 @@ POST /admin/chains/import { "chain_id": 43114 }  # Avalanche
 POST /admin/chains { "chain_id": 43114, "name": "Avalanche", "rpc_url": "https://..." }
 ```
 
-### 6.4 Contract Import
+### 6.7 Contract Import
 Place chain-agnostic ABI files in `data/contracts/abis/`:
 ```bash
 python3 scripts/import_contracts.py                    # Import all
@@ -321,7 +358,7 @@ python3 skills/refinet-platform-ops/scripts/health_check.py --email --always
 ## Testing
 
 ```bash
-# Run all tests (207 pass, 5 known pre-existing failures)
+# Run all tests (214 pass)
 python3 -m pytest api/tests/ -v
 
 # Run agent engine tests only (18/18 pass)
@@ -355,6 +392,7 @@ python3 -c "from api.services.dag_orchestrator import PIPELINE_TEMPLATES; print(
 | `skills/refinet-platform-ops/SKILL.md` | Platform ops skill — autonomous monitoring and agent pipeline |
 | `skills/refinet-knowledge-curator/SKILL.md` | Knowledge curator skill — RAG/CAG maintenance and drift detection |
 | `skills/refinet-contract-watcher/SKILL.md` | Contract watcher skill — on-chain intelligence and ABI security |
+| `skills/refinet-sdk-gateway/SKILL.md` | SDK Gateway skill — deterministic contract SDK access for agents |
 | `docs/KNOWLEDGE_CURATOR_SETUP.md` | Knowledge curator setup guide |
 | `docs/CONTRACT_WATCHER_SETUP.md` | Contract watcher setup guide |
 | `configs/README.md` | YAML configuration hierarchy |

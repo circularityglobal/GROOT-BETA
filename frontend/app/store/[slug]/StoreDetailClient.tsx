@@ -51,9 +51,9 @@ interface Review {
   created_at: string
 }
 
-export default function AppDetailPage() {
+export default function StoreDetailClient() {
   const params = useParams()
-  const slug = Array.isArray(params.slug) ? params.slug.join('/') : params.slug
+  const slug = params.slug as string
   const [app, setApp] = useState<AppDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')

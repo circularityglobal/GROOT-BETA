@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
+import Link from 'next/link'
 import MatrixRain from '@/components/MatrixRain'
 import TerminalText from '@/components/TerminalText'
 
@@ -45,8 +46,7 @@ export default function PanelHero({ isActive, onNext }: PanelHeroProps) {
             <img
               src="/refi-logo.png"
               alt="REFINET"
-              className="w-20 h-20 rounded-2xl animate-float"
-              style={{ boxShadow: '0 0 30px var(--refi-teal-glow-strong), 0 0 60px var(--refi-teal-glow)' }}
+              className="w-20 h-20 animate-float"
             />
           </div>
 
@@ -64,7 +64,7 @@ export default function PanelHero({ isActive, onNext }: PanelHeroProps) {
           >
             <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: 'var(--success)' }} />
             <TerminalText
-              text="groot --status  ·  BitNet b1.58  ·  2B Params  ·  Online  ·  Sovereign"
+              text="sovereign infrastructure  ·  zero cost  ·  by the people  ·  for the planet"
               speed={20}
               delay={600}
               cursor={false}
@@ -78,8 +78,8 @@ export default function PanelHero({ isActive, onNext }: PanelHeroProps) {
             transition={{ delay: 0.2, duration: 0.7 }}
             className="text-4xl md:text-7xl font-extrabold tracking-tighter leading-[1.08] mb-6 text-glow"
           >
-            Intelligence that grows<br />
-            <span style={{ color: 'var(--refi-teal)' }}>from the ground up</span>
+            A new internet built to<br />
+            <span style={{ color: 'var(--refi-teal)' }}>regenerate the world</span>
           </motion.h1>
 
           {/* Subheadline */}
@@ -90,8 +90,9 @@ export default function PanelHero({ isActive, onNext }: PanelHeroProps) {
             className="text-base md:text-lg max-w-xl mx-auto mb-10 leading-relaxed font-body"
             style={{ color: 'var(--text-secondary)' }}
           >
-            Sovereign AI infrastructure. OpenAI-compatible API.
-            Cryptographic identity. Zero subscription. Forever free.
+            Sovereign AI infrastructure. Cryptographic identity.
+            Self-operating agents. Built by the people who want to
+            bring the world back to balance. Forever free.
           </motion.p>
 
           {/* CTAs */}
@@ -101,12 +102,12 @@ export default function PanelHero({ isActive, onNext }: PanelHeroProps) {
             transition={{ delay: 0.7, duration: 0.5 }}
             className="flex flex-col sm:flex-row items-center justify-center gap-3"
           >
-            <a href="/chat/" className="btn-primary !text-base !py-3 !px-8 w-full sm:w-auto text-center font-mono">
+            <Link href="/login/" className="btn-primary !text-base !py-3 !px-8 w-full sm:w-auto text-center font-mono" prefetch={true}>
+              {'>'} Get Started
+            </Link>
+            <Link href="/chat/" className="btn-secondary !text-base !py-3 !px-8 w-full sm:w-auto text-center font-mono" prefetch={true}>
               {'>'} Talk to Groot
-            </a>
-            <a href="/docs/" className="btn-secondary !text-base !py-3 !px-8 w-full sm:w-auto text-center font-mono">
-              {'>'} API Docs
-            </a>
+            </Link>
           </motion.div>
         </motion.div>
 
